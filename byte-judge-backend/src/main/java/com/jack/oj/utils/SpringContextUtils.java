@@ -1,16 +1,14 @@
 package com.jack.oj.utils;
 
-import org.jetbrains.annotations.NotNull;
 import org.springframework.beans.BeansException;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
+import org.springframework.lang.NonNull;
 import org.springframework.stereotype.Component;
 
 /**
  * Spring 上下文获取工具
  *
- * @author <a href="https://github.com/liyupi">程序员鱼皮</a>
- * @from <a href="https://yupi.icu">编程导航知识星球</a>
  */
 @Component
 public class SpringContextUtils implements ApplicationContextAware {
@@ -18,7 +16,7 @@ public class SpringContextUtils implements ApplicationContextAware {
     private static ApplicationContext applicationContext;
 
     @Override
-    public void setApplicationContext(@NotNull ApplicationContext applicationContext) throws BeansException {
+    public void setApplicationContext(@NonNull ApplicationContext applicationContext) throws BeansException {
         SpringContextUtils.applicationContext = applicationContext;
     }
 

@@ -4,7 +4,7 @@ import static com.jack.oj.constant.UserConstant.USER_LOGIN_STATE;
 
 import cn.hutool.core.collection.CollUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.jack.oj.common.ErrorCode;
 import com.jack.oj.constant.CommonConstant;
 import com.jack.oj.exception.BusinessException;
@@ -19,7 +19,7 @@ import com.jack.oj.utils.SqlUtils;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
-import javax.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import me.chanjar.weixin.common.bean.WxOAuth2UserInfo;
 import org.apache.commons.lang3.StringUtils;
@@ -30,17 +30,18 @@ import org.springframework.util.DigestUtils;
 /**
  * 用户服务实现
  *
- * @author <a href="https://github.com/liyupi">程序员鱼皮</a>
- * @from <a href="https://yupi.icu">编程导航知识星球</a>
  */
 @Service
 @Slf4j
 public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements UserService {
 
     /**
-     * 盐值，混淆密码
+     * 密码加盐。
+     *
+     * todo 模板占位值，上线前必须替换：盐值一旦变更，所有已注册用户的密码都会失效。
+     * 更稳妥的做法是改用 BCrypt（内置随机盐，无需自行管理）。
      */
-    public static final String SALT = "yupi";
+    public static final String SALT = "byte-judge";
 
     @Override
     public long userRegister(String userAccount, String userPassword, String checkPassword) {
