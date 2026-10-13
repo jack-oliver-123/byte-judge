@@ -25,7 +25,10 @@ npx vue-cli-service lint src/components/GlobalHeader.vue
 npx vue-cli-service lint --no-fix src/        # 只检查不改写
 ```
 
-**类型检查**：没有独立的 type-check script。TypeScript 校验由 `@vue/cli-plugin-typescript` 的 fork-ts-checker 在 `serve` / `build` 过程中完成，因此类型错误只会在跑这两个命令时暴露。
+**类型检查**：没有独立的 type-check script，且覆盖范围有缺口（实测）：
+
+- `.ts` 文件：`npx tsc --noEmit` 可秒级独立校验，远快于 `build`（~33s）。改 `.ts` 后优先用它。
+- `.vue` 文件：**类型无人检查**。`tsc` 按扩展名跳过 `.vue`；`build` 的 fork-ts-checker 实测也放过 SFC 内的类型错误。改 `.vue` 时没有自动化兜底，要补齐需引入 `vue-tsc`。
 
 **测试**：当前**未配置任何测试框架**（无 Jest / Vitest / Cypress，package.json 中无 `test` script）。如需加测试，要先引入 `@vue/cli-plugin-unit-jest` 或迁移到 Vitest。
 
@@ -58,7 +61,15 @@ main.ts  →  App.vue  →  BasicLayout.vue  →  <router-view />
 
 ### 状态管理
 
-`src/store/index.ts` 是 **Vuex 4** 的空壳（state / getters / mutations / actions / modules 全为空）。尚未接入任何业务状态。按 `modules` 字段的预留，后续应按模块拆分（如 `store/user.ts`）再注册进来。
+**Vuex 4**，已接入 `user` 模块（`store/user.ts`，`namespaced: true`，存 `loginUser`）。类型集中在 `store/types.ts`——独立成文件是为了避免 `index.ts` ↔ `user.ts` 循环引用。
+
+以下三条漏掉任何一条都**不会有编译报错**，只在运行时出问题：
+
+- `main.ts` 必须 `app.use(store, key)`。`key` 是 `InjectionKey<Store<RootState>>`，Vuex 4 靠它给 `useStore()` 带类型；改回 `app.use(store)` 会让 `useStore()` 返回 `undefined`。
+- 组件内一律 `import { useStore } from "@/store"`（项目封装版，已带 `RootState`），**不要**从 `vuex` 直接导入。
+- 新增模块要同时做两件事：注册进 `index.ts` 的 `modules`，并在 `types.ts` 的 `RootState` 上补字段。模块 state 是运行时合并的，TS 推导不出来。
+
+模块外部 dispatch / commit 需带命名空间前缀（`store.dispatch("user/getLoginUser")`），模块内部用短名即可。
 
 ### UI 组件库
 
@@ -83,5 +94,6 @@ Arco Design Vue 已在 `main.ts` 中**全局全量注册**，模板里直接写 
 以下在当前代码中**尚不存在**，新增相关功能时需从零搭建，不要假设已有：
 
 - HTTP 请求层（无 axios / 无 `src/api` 目录 / 无 `.env` 环境变量配置）
-- 用户登录态与权限控制（`meta.access` 之类的路由守卫）
+- 登录流程与权限控制（建设中）：`store/user.ts` 的 `getLoginUser` 目前返回本地占位数据，尚无 HTTP 调用。若页面显示"未登录"，先确认是否有调用方 dispatch 过它——未必是 bug。
 - 测试框架
+- `.vue` 的类型检查（需 `vue-tsc`）
