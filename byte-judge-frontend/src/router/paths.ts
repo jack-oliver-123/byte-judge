@@ -11,7 +11,8 @@
 /** 无权限提示页 */
 export const NO_AUTH_PATH = "/noAuth";
 
-/**
- * 登录页。登录页尚未实现，接入后把守卫里"未登录"分支的跳转目标改到这里。
- */
-// export const LOGIN_PATH = "/user/login";
+/** 登录页 */
+export const LOGIN_PATH = "/user/login";
+
+/** 注册页 */
+export const REGISTER_PATH = "/user/register";
