@@ -1,13 +1,12 @@
 <script setup lang="ts">
-import BasicLayout from "@/layouts/BasicLayout.vue";
 import { onMounted } from "vue";
 
 /**
- * 全局初始化逻辑的入口。
+ * 根组件只剩一个 <router-view />。
  *
- * 放在 App.vue 而非 main.ts：这里能用到组件实例、store 与 router，
- * 且只在应用挂载后执行一次，适合登录态探测、全局事件监听这类
- * 依赖 DOM 就绪的初始化。与渲染无关的插件注册仍留在 main.ts。
+ * 布局不再在这里选择：哪套布局包住哪个页面，由 routes.ts 的嵌套结构决定
+ * （顶层路由的 component 即布局组件）。在这里写 if-else 区分布局的问题是
+ * 每加一套布局都要改根组件，而路由表本来就已经表达了这个归属关系。
  */
 onMounted(() => {
   // 在这里编写全局初始化逻辑
@@ -15,12 +14,5 @@ onMounted(() => {
 </script>
 
 <template>
-  <div id="app">
-    <BasicLayout />
-  </div>
+  <router-view />
 </template>
-
-<style scoped>
-#app {
-}
-</style>
