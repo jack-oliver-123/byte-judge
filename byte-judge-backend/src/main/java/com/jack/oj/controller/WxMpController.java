@@ -4,9 +4,9 @@ import com.jack.oj.wxmp.WxMpConstant;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collections;
-import javax.annotation.Resource;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import me.chanjar.weixin.common.api.WxConsts.MenuButtonType;
 import me.chanjar.weixin.common.bean.menu.WxMenu;
@@ -25,8 +25,6 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * 微信公众号相关接口
  *
- * @author <a href="https://github.com/liyupi">程序员鱼皮</a>
- * @from <a href="https://yupi.icu">编程导航知识星球</a>
  **/
 @RestController
 @RequestMapping("/")
@@ -107,8 +105,8 @@ public class WxMpController {
         WxMenuButton wxMenuButton1SubButton1 = new WxMenuButton();
         wxMenuButton1SubButton1.setType(MenuButtonType.VIEW);
         wxMenuButton1SubButton1.setName("跳转页面");
-        wxMenuButton1SubButton1.setUrl(
-                "https://yupi.icu");
+        // todo 替换为实际跳转地址
+        wxMenuButton1SubButton1.setUrl("https://example.com");
         wxMenuButton1.setSubButtons(Collections.singletonList(wxMenuButton1SubButton1));
 
         // 菜单二
@@ -124,7 +122,8 @@ public class WxMpController {
         WxMenuButton wxMenuButton3SubButton1 = new WxMenuButton();
         wxMenuButton3SubButton1.setType(MenuButtonType.VIEW);
         wxMenuButton3SubButton1.setName("编程学习");
-        wxMenuButton3SubButton1.setUrl("https://yupi.icu");
+        // todo 替换为实际跳转地址
+        wxMenuButton3SubButton1.setUrl("https://example.com");
         wxMenuButton3.setSubButtons(Collections.singletonList(wxMenuButton3SubButton1));
 
         // 设置主菜单
