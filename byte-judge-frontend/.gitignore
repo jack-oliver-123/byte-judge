@@ -7,6 +7,9 @@ node_modules
 .env.local
 .env.*.local
 
+# Playwright MCP 调试产物（截图、页面快照、控制台日志）
+.playwright-mcp/
+
 # Log files
 npm-debug.log*
 yarn-debug.log*
