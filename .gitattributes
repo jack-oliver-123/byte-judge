@@ -1,0 +1,10 @@
+# 统一行尾：仓库内存储为 LF，检出到工作区同样保持 LF。
+#
+# 必须显式写 eol=lf，而非依赖各机器的 core.autocrlf：
+# Prettier 的 endOfLine 默认为 "lf"，Windows 下若检出成 CRLF，
+# eslint-plugin-prettier 会对每一行报 "Delete ␍"，并直接中断 npm run build。
+* text=auto eol=lf
+
+# 二进制资源，禁止任何行尾转换
+*.png binary
+*.ico binary
