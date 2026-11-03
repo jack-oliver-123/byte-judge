@@ -1,6 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="Encoding">
+    <file url="file://$PROJECT_DIR$/byte-judge-backend/byte-judge-commons/common-core/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/byte-judge-backend/byte-judge-commons/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/byte-judge-backend/byte-judge-commons/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/byte-judge-backend/byte-judge-gateway/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/byte-judge-backend/byte-judge-models/byte-judge-contest-model/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/byte-judge-backend/byte-judge-models/byte-judge-judge-model/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/byte-judge-backend/byte-judge-models/byte-judge-problem-model/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/byte-judge-backend/byte-judge-models/byte-judge-submission-model/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/byte-judge-backend/byte-judge-models/byte-judge-user-model/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/byte-judge-backend/byte-judge-models/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/byte-judge-backend/byte-judge-models/src/main/resources" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/byte-judge-backend/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/byte-judge-backend/src/main/resources" charset="UTF-8" />
   </component>
 </project>

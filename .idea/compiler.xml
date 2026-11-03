@@ -6,13 +6,26 @@
         <sourceOutputDir name="target/generated-sources/annotations" />
         <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
         <outputRelativeToContentRoot value="true" />
-        <module name="byte-judge-backend" />
+        <module name="byte-judge-contest-model" />
+        <module name="byte-judge-judge-model" />
+        <module name="byte-judge-gateway" />
+        <module name="byte-judge-user-model" />
+        <module name="byte-judge-submission-model" />
+        <module name="common-core" />
+        <module name="byte-judge-problem-model" />
       </profile>
     </annotationProcessing>
   </component>
   <component name="JavacSettings">
     <option name="ADDITIONAL_OPTIONS_OVERRIDE">
-      <module name="byte-judge-backend" options="-parameters" />
+      <module name="byte-judge-backend" options="" />
+      <module name="byte-judge-contest-model" options="-parameters" />
+      <module name="byte-judge-gateway" options="-parameters" />
+      <module name="byte-judge-judge-model" options="-parameters" />
+      <module name="byte-judge-problem-model" options="-parameters" />
+      <module name="byte-judge-submission-model" options="-parameters" />
+      <module name="byte-judge-user-model" options="-parameters" />
+      <module name="common-core" options="-parameters" />
     </option>
   </component>
 </project>
