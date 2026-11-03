@@ -1,4 +1,7 @@
 # CLAUDE.md
 
 - 本目录为 B 端前端，仓库结构与当前阶段见 `../CLAUDE.md`。
-- B 端技术选型尚未确定，具体开发约定待选型后补充。
+- 技术栈沿用 `../docs/03.技术选型调研.md`：Vue 3、TypeScript、Vite、Vue Router、Pinia、Element Plus；工程由官方脚手架 `create-vue` 初始化。
+- 构建基址为 `/admin/`（`vite.config.ts` 的 `base`），部署约定见 `../docs/04.系统架构设计.md` §2.3。
+- 业务请求统一走 `/api/v1/**` 网关路径，前端不直连业务服务。
+- 当前仅完成工程底座初始化，业务页面、请求层与 Element Plus 组件接入待实现。
