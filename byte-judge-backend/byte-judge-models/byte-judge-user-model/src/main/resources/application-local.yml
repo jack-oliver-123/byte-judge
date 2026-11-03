@@ -1,0 +1,34 @@
+spring:
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/bj_user?connectionTimeZone=UTC
+    username: bj_user
+    password: ${MYSQL_USER_PASSWORD}
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+      connection-timeout: 5000
+  flyway:
+    enabled: false
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:16379}
+      password: ${REDIS_PASSWORD}
+      connect-timeout: 3s
+      timeout: 3s
+  rabbitmq:
+    host: ${RABBITMQ_HOST:127.0.0.1}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER}
+    password: ${RABBITMQ_PASSWORD}
+    connection-timeout: 5s
+server:
+  address: 127.0.0.1
+  tomcat:
+    basedir: ${BYTE_JUDGE_RUNTIME_DIR:./.local/runtime}/user
+    accesslog:
+      enabled: true
+      directory: ${BYTE_JUDGE_LOG_DIR:${user.dir}/log}/user/access
+      prefix: access
+      suffix: .log
+      pattern: '%t %m %U %s'

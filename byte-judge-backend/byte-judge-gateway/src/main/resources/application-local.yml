@@ -1,0 +1,10 @@
+server:
+  address: 127.0.0.1
+  tomcat:
+    basedir: ${BYTE_JUDGE_RUNTIME_DIR:./.local/runtime}/gateway
+    accesslog:
+      enabled: true
+      directory: ${BYTE_JUDGE_LOG_DIR:${user.dir}/log}/gateway/access
+      prefix: access
+      suffix: .log
+      pattern: '%t %m %U %s'

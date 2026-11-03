@@ -1,0 +1,52 @@
+spring:
+  application:
+    name: byte-judge-gateway
+  profiles:
+    default: local
+  cloud:
+    gateway:
+      server:
+        webmvc:
+          routes:
+            - id: user
+              uri: lb://byte-judge-user-model
+              predicates:
+                - Path=/api/v1/auth/**,/api/v1/users/**,/api/v1/me/messages/**,/api/v1/admin/users/**
+            - id: problem
+              uri: lb://byte-judge-problem-model
+              predicates:
+                - Path=/api/v1/problems/**,/api/v1/admin/problems/**
+            - id: submission
+              uri: lb://byte-judge-submission-model
+              predicates:
+                - Path=/api/v1/submissions/**,/api/v1/runs/**,/api/v1/me/statistics/**,/api/v1/admin/submissions/**,/api/v1/admin/executions/**,/api/v1/admin/schedules/**
+            - id: contest
+              uri: lb://byte-judge-contest-model
+              predicates:
+                - Path=/api/v1/contests/**,/api/v1/me/contests/**,/api/v1/admin/contests/**
+    nacos:
+      discovery:
+        server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
+        group: BYTE_JUDGE
+        ip: ${SERVICE_IP:127.0.0.1}
+server:
+  port: ${SERVER_PORT:8080}
+logging:
+  file:
+    name: ${BYTE_JUDGE_LOG_DIR:${user.dir}/log}/gateway/application.log
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 7
+      total-size-cap: 100MB
+management:
+  server:
+    port: ${MANAGEMENT_PORT:9080}
+    address: 127.0.0.1
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never

@@ -1,6 +1,7 @@
 **/target/
 .env.local
 .local/
+/log/
 **/*.log
 .mvn/wrapper/maven-wrapper.jar
 .idea/

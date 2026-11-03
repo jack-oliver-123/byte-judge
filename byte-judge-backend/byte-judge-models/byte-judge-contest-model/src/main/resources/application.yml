@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: byte-judge-contest-model
+  profiles:
+    default: local
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
+        group: BYTE_JUDGE
+        ip: ${SERVICE_IP:127.0.0.1}
+server:
+  port: ${SERVER_PORT:8084}
+logging:
+  file:
+    name: ${BYTE_JUDGE_LOG_DIR:${user.dir}/log}/contest/application.log
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 7
+      total-size-cap: 100MB
+management:
+  server:
+    port: ${MANAGEMENT_PORT:9084}
+    address: 127.0.0.1
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
