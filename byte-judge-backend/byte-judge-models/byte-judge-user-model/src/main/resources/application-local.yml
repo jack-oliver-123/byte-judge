@@ -8,7 +8,7 @@ spring:
       minimum-idle: 1
       connection-timeout: 5000
   flyway:
-    enabled: false
+    enabled: true
   data:
     redis:
       host: ${REDIS_HOST:127.0.0.1}
