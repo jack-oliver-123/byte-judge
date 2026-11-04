@@ -31,6 +31,7 @@
         <spring-cloud.version>2025.1.4</spring-cloud.version>
         <spring-cloud-alibaba.version>2025.1.0.0</spring-cloud-alibaba.version>
         <mybatis-plus.version>3.5.18</mybatis-plus.version>
+        <mysql.version>9.7.0</mysql.version>
         <maven-enforcer-plugin.version>3.6.2</maven-enforcer-plugin.version>
     </properties>
 
