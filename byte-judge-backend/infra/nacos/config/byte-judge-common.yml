@@ -1,0 +1,20 @@
+# Shared non-sensitive runtime configuration for services that import Nacos Config.
+#
+# Data ID: byte-judge-common.yml
+# Group:   BYTE_JUDGE (override with NACOS_CONFIG_GROUP)
+# Import:  the services add it through spring.config.import, not bootstrap.yml.
+#
+# Do not add credentials, tokens, private endpoints or environment-specific connection
+# strings here. Those stay in the controlled environment/file. `refreshEnabled=false` is
+# used at the import site: this slice does not promise live refresh of every value.
+logging:
+  level:
+    root: INFO
+    com.jack.bytejudge: INFO
+    com.alibaba.nacos: WARN
+    org.springframework.web: INFO
+  pattern:
+    # Key/value fields keep the correlation id on every line. No headers, bodies, cookies or
+    # query values are logged, and no framework request-detail logging is enabled.
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] [requestId=%X{requestId:-none}] %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] [requestId=%X{requestId:-none}] %logger{36} - %msg%n"

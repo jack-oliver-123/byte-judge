@@ -1,6 +1,3 @@
-byte-judge:
-  session:
-    cookie-secure: false
 spring:
   data:
     redis:

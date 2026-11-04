@@ -17,6 +17,10 @@ public record ApiResponse<T>(int code, T data, String message, String requestId,
         return new ApiResponse<>(error.code(), null, error.message(), requestId, now());
     }
 
+    public static <T> ApiResponse<T> failure(ApiError error, T data, String requestId) {
+        return new ApiResponse<>(error.code(), data, error.message(), requestId, now());
+    }
+
     private static String now() {
         return UTC_MILLIS.format(Instant.now().truncatedTo(ChronoUnit.MILLIS));
     }

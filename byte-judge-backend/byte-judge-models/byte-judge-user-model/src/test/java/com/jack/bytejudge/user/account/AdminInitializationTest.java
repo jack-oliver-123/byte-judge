@@ -411,6 +411,10 @@ class AdminInitializationTest {
                 Path.of(System.getProperty("java.home"), "bin", "java").toString(), "@" + arguments));
         var environment = builder.environment();
         environment.put("SPRING_PROFILES_ACTIVE", "admin-command-test");
+        environment.put("BYTE_JUDGE_INTERNAL_GATEWAY_CREDENTIAL",
+                "admin-command-test-internal-credential-0123456789");
+        environment.put("BYTE_JUDGE_WEB_INGRESS", "false");
+        environment.put("SPRING_CONFIG_IMPORT", "classpath:byte-judge-session.yml");
         environment.put("SPRING_DATASOURCE_URL", DATABASE.getJdbcUrl());
         environment.put("SPRING_DATASOURCE_USERNAME", DATABASE.getUsername());
         environment.put("SPRING_DATASOURCE_PASSWORD", DATABASE.getPassword());

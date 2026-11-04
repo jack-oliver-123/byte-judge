@@ -1,0 +1,20 @@
+# Single source of truth for the session contract shared by the gateway and the user service.
+# Both services import this file, so timeout, repository type, namespace and the local Secure
+# override cannot drift apart. Credentials and per-environment connection settings stay in the
+# importing service's own configuration.
+spring:
+  session:
+    timeout: 30m
+    data:
+      redis:
+        repository-type: indexed
+        namespace: byte-judge:session
+---
+spring:
+  config:
+    activate:
+      on-profile: local
+byte-judge:
+  session:
+    # Local loopback debugging uses plain HTTP; every other environment keeps Secure=true.
+    cookie-secure: false

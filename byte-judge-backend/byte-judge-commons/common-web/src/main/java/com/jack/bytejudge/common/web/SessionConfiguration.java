@@ -15,6 +15,9 @@ public class SessionConfiguration {
         var serializer = new DefaultCookieSerializer();
         serializer.setCookieName("BJSESSION");
         serializer.setCookiePath("/");
+        // The internal verification call forwards the cookie value as the session identifier; the
+        // default Base64 encoding would make that value unusable with the indexed repository.
+        serializer.setUseBase64Encoding(false);
         serializer.setUseHttpOnlyCookie(true);
         serializer.setUseSecureCookie(secure);
         serializer.setSameSite("Lax");

@@ -2,6 +2,9 @@ param([string]$JdkPath = 'C:\Develop\JDK\jdk21')
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/use-java21.ps1" -JdkPath $JdkPath
 . "$PSScriptRoot/local-env.ps1"
+# The gateway and user service import required configuration from Nacos and refuse to start
+# without it. Publishing is idempotent, so this also repairs a missing Data ID.
+& "$PSScriptRoot/import-nacos-config.ps1"
 $pidDir = Join-Path $BackendRoot '.local/pids'
 New-Item -ItemType Directory -Force $pidDir | Out-Null
 $names = @('gateway', 'user', 'problem', 'submission', 'contest', 'judge')
