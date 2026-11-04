@@ -48,7 +48,7 @@
 仅 `POST /api/v1/auth/login` 受此限制；CSRF、身份查询、退出及公开资源不参与登录失败计数，也不会因账户或来源被限制而拒绝。
 
 - 两个维度独立计数：规范化账户（去首尾空白后转小写，与认证使用同一规则）和可信来源地址。每次凭据失败同时计入两个维度；任一维度在 15 分钟固定窗口内累计 10 次失败后，该维度被限制 15 分钟。账户不存在与密码错误走同一路径，不产生可区分的提示。
-- 阈值语义：第 10 次失败仍返回 `401/40101`，同时启用限制；此后（包括并发中超过阈值的失败）在查询账户或校验密码之前直接返回 `429/42900`。
+- 阈值语义：第 10 次失败仍返回 `401/40101`，同时启用限制；入口检查已看到限制的请求在查询账户或校验密码之前返回 `429/42900`。已经通过入口检查的并发请求可能仍完成凭据校验，其中超过阈值的失败由原子计数返回 `429/42900`；不会额外返回凭据失败 401。
 - 429 响应头 `Retry-After` 为剩余秒数（向上取整），响应体 `data.retryAfterSeconds` 与之一致；`data` 只含这一个字段，不包含账户是否存在、命中的维度或账户状态。等待期满后可重新尝试。
 - 窗口从某维度第一次失败起固定计算，后续失败不延长窗口；限制由 `SET NX` 创建，重复受限请求和并发失败都不延长，也不清除另一维度。成功登录不重置计数。限制到期时对应计数一并过期，下一次从零开始，避免到期后立即再次触发限制。
 - Redis 键只包含维度（`account`/`source`）、规范化账户或 IP、固定后缀 `:failures`/`:blocked` 及可配置命名空间，不包含密码、摘要、会话或 CSRF。默认命名空间为 `byte-judge:auth:login`。
@@ -119,6 +119,42 @@ Invoke-RestMethod "$base/users/me" -WebSession $session
 ```
 
 接口测试工具也应开启 Cookie 管理，先 GET 令牌，保存 Cookie，再将令牌放入响应指明的请求头。不要手工复制 Cookie/令牌到共享文件、截图或日志。验证错误凭据时应使用一个新的游客会话；已登录会话会先得到 409。
+
+在独立测试环境、来源尚无失败计数时，可用下面的游客会话复现阈值。随机账户无需预先创建，示例不使用真实账户密码，只输出尝试序号、HTTP 状态与等待秒数。默认策略下前 10 次为 401，第 11 次为 429；同一来源已有失败计数时可能提前受限。
+
+```powershell
+$base = 'http://127.0.0.1:8080/api/v1'
+$guest = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+$csrf = (Invoke-RestMethod "$base/auth/csrf" -WebSession $guest).data
+$headers = @{ $csrf.headerName = $csrf.token }
+$body = @{ account = 'limit_' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+           password = [guid]::NewGuid().ToString('N') } | ConvertTo-Json -Compress
+try {
+    1..11 | ForEach-Object {
+        $attempt = $_
+        try {
+            $response = Invoke-WebRequest "$base/auth/login" -UseBasicParsing -Method Post `
+                -WebSession $guest -Headers $headers -ContentType 'application/json; charset=utf-8' `
+                -Body ([Text.Encoding]::UTF8.GetBytes($body)) -ErrorAction Stop
+            [pscustomobject]@{ Attempt = $attempt; Status = [int]$response.StatusCode; RetryAfter = $null }
+        } catch {
+            if ($null -eq $_.Exception.Response) { throw }
+            $response = $_.Exception.Response
+            $retry = $null
+            if ($response.Headers -is [Net.WebHeaderCollection]) {
+                $retry = $response.Headers['Retry-After'] # Windows PowerShell 5.1
+            } elseif ($null -ne $response.Headers.RetryAfter) {
+                $retry = $response.Headers.RetryAfter.ToString() # PowerShell 7
+            }
+            [pscustomobject]@{ Attempt = $attempt; Status = [int]$response.StatusCode; RetryAfter = $retry }
+        }
+    }
+} finally {
+    $body = $null
+}
+# 受限后仍可获取公开 CSRF 令牌；生产默认等待 15 分钟后可重新登录。
+(Invoke-WebRequest "$base/auth/csrf" -WebSession $guest -UseBasicParsing).StatusCode
+```
 
 ## 自动验证
 

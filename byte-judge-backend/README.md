@@ -97,6 +97,12 @@ docker compose --env-file .env.local up -d --wait
 
 同次把 #6 的“正常 Web 启动”测试补上临时 Redis：用户服务现在按共享会话依赖 Redis，该测试原先只准备 MySQL。该命令路径仍不依赖 Redis，未向现有本地库写入数据。本次未重启本地六服务或重新执行全底座 `smoke-test.ps1`（注册、端口与路由未变）；会话并发撤销（#9）、实时身份核验、管理接口、限频与 CORS 未验证。
 
+2026-11-04，任务 #10：登录失败按规范化账户与可信来源独立执行 Redis 原子限频，默认 15 分钟固定窗口内 10 次失败触发 15 分钟限制；第 10 次仍为 401，后续为 `429/42900`，`Retry-After` 与 `data.retryAfterSeconds` 一致。成功不清零，重复受限请求不续期；来源由网关 socket 对端及用户服务显式可信代理边界确定。协议、信任配置和 PowerShell 阈值复现示例见 [认证接口](docs/auth-api.md#登录失败限频)。
+
+同次在独立 worktree `feat/login-rate-limit` 使用 Java 21.0.11、Maven Wrapper 3.9.15：7 项新增真实 HTTP 验收全部通过（0 failure、0 error、0 skipped，2 分 56 秒），覆盖来源跨账户、账户跨实际来源及大小写/空白归一化、20 个并发失败恰好 10 个 401 与 10 个 429、伪造转发/内部来源头、成功不清零、短限制到期恢复且重复 429 不延长，以及非可信来源直连用户服务。网关与用户服务为独立 JVM，MySQL/Redis/Nacos 为独立临时容器；仅限制时长覆盖为 3 秒，阈值/窗口仍为 10/15m。另有 23 项聚焦测试全部通过（21 项用户服务、2 项网关，33 秒），包括真实 Redis 原子计数/TTL/并发、来源解析、生产默认值及 Redis 故障时认证失败关闭。固定窗口测试另以临时滑动窗口变体验证会按预期失败（剩余 4997ms 未小于原窗口 4891ms），确认用例能区分两种语义；生产实现已恢复并通过。
+
+随后在同一 worktree 执行 `mvnw clean package -B`：Java 21.0.11 下 11 个 reactor 项全部 SUCCESS，95 项测试全部通过（0 failure、0 error、0 skipped），总耗时 8 分 16 秒，其中网关 9 项、用户服务 86 项。该次构建同时包含管理员命令独立配置根修复（`--spring.config.name=admin-command`、`--spring.cloud.nacos.config.enabled=false`、`admin-command.yml` / `admin-command-local.yml`），使 admin-command 回归通过。输出保存在 `log/build/issue10-full-package.log`，HTTP、聚焦及窗口反证分别位于 `log/build/issue10-http.log`、`issue10-focused.log`、`issue10-sliding-window-negative.log`。未重启已有六服务或执行全底座 smoke，#10 未改变注册、端口或路由；Redis 故障的完整 HTTP 响应仍由最终集成切片验收。
+
 实测镜像摘要（标签对应的下载制品，生产发布前需重新审查并冻结）：
 
 | 镜像 | RepoDigest SHA-256 |

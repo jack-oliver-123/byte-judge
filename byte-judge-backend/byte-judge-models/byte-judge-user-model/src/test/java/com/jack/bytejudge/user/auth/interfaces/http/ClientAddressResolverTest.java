@@ -1,7 +1,6 @@
-package com.jack.bytejudge.user.auth;
+package com.jack.bytejudge.user.auth.interfaces.http;
 
 import com.jack.bytejudge.common.web.ClientAddressHeader;
-import com.jack.bytejudge.user.auth.interfaces.http.ClientAddressResolver;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 

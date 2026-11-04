@@ -1,9 +1,8 @@
-package com.jack.bytejudge.user.auth;
+package com.jack.bytejudge.user.auth.application;
 
 import com.jack.bytejudge.common.core.security.SessionIdentity;
 import com.jack.bytejudge.user.account.domain.AccountRole;
 import com.jack.bytejudge.user.account.domain.AccountStatus;
-import com.jack.bytejudge.user.auth.application.Authenticator;
 import com.jack.bytejudge.user.auth.application.port.AccountLookup;
 import com.jack.bytejudge.user.auth.application.port.AuthAudit;
 import com.jack.bytejudge.user.auth.application.port.LoginAttemptLimiter;

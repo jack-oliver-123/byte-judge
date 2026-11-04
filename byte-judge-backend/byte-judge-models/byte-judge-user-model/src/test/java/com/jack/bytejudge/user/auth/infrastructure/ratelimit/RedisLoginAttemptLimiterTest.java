@@ -1,7 +1,4 @@
-package com.jack.bytejudge.user.auth;
-
-import com.jack.bytejudge.user.auth.infrastructure.ratelimit.LoginRateLimitProperties;
-import com.jack.bytejudge.user.auth.infrastructure.ratelimit.RedisLoginAttemptLimiter;
+package com.jack.bytejudge.user.auth.infrastructure.ratelimit;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -151,6 +148,25 @@ class RedisLoginAttemptLimiterTest {
     }
 
     @Test
+    void laterFailuresDoNotMoveEitherFixedWindow() throws Exception {
+        record("fixed_account", "127.0.2.2");
+        String accountKey = namespace + ":account:fixed_account:failures";
+        String sourceKey = namespace + ":source:127.0.2.2:failures";
+        long accountTtl = template.getExpire(accountKey, TimeUnit.MILLISECONDS);
+        long sourceTtl = template.getExpire(sourceKey, TimeUnit.MILLISECONDS);
+
+        Thread.sleep(150);
+        record("fixed_account", "127.0.2.2");
+
+        assertThat(template.getExpire(accountKey, TimeUnit.MILLISECONDS))
+                .as("a later failure must not restart the account window")
+                .isPositive().isLessThan(accountTtl - 100);
+        assertThat(template.getExpire(sourceKey, TimeUnit.MILLISECONDS))
+                .as("a later failure must not restart the source window")
+                .isPositive().isLessThan(sourceTtl - 100);
+    }
+
+    @Test
     void theBlockExpiresAndAllowsFreshAttempts() throws Exception {
         limiter = new RedisLoginAttemptLimiter(template,
                 new LoginRateLimitProperties(Duration.ofSeconds(5), 3, Duration.ofMillis(300), namespace));
@@ -182,6 +198,35 @@ class RedisLoginAttemptLimiterTest {
         assertThat(second).as("reads must observe a shrinking TTL").isLessThan(first);
         Thread.sleep(800);
         assertThat(limiter.blockedFor("extend_account", "127.0.4.1")).isEmpty();
+    }
+
+    @Test
+    void anAccountBlockCanExpireWithoutClearingALaterSourceBlock() throws Exception {
+        limiter = new RedisLoginAttemptLimiter(template,
+                new LoginRateLimitProperties(Duration.ofSeconds(5), 3, Duration.ofMillis(1400), namespace));
+        record("early_account", "127.0.6.1");
+        record("early_account", "127.0.6.2");
+        record("early_account", "127.0.6.3");
+        assertThat(limiter.blockedFor("early_account", "127.0.6.4")).isPresent();
+
+        Thread.sleep(600);
+        record("another_account", "127.0.6.1");
+        record("third_account", "127.0.6.1");
+        assertThat(limiter.blockedFor("fresh_account", "127.0.6.1")).isPresent();
+
+        long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+        while (limiter.blockedFor("early_account", "127.0.6.4").isPresent()
+                && System.nanoTime() < deadline) {
+            Thread.sleep(25);
+        }
+        assertThat(limiter.blockedFor("early_account", "127.0.6.4"))
+                .as("the earlier account block expires independently").isEmpty();
+        assertThat(limiter.blockedFor("early_account", "127.0.6.1"))
+                .as("the later source block still limits the expired account").isPresent();
+        assertThat(limiter.recordFailure("early_account", "127.0.6.4"))
+                .as("the account starts a fresh window on another source").isEmpty();
+        assertThat(limiter.blockedFor("fresh_account", "127.0.6.1"))
+                .as("a new failure elsewhere must not clear the source block").isPresent();
     }
 
     @Test

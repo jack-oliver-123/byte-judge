@@ -1,0 +1,4 @@
+# The provisioning command has a separate configuration root and never imports Nacos.
+spring:
+  profiles:
+    default: local

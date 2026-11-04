@@ -1,6 +1,4 @@
-package com.jack.bytejudge.user.auth;
-
-import com.jack.bytejudge.user.auth.infrastructure.ratelimit.LoginRateLimitProperties;
+package com.jack.bytejudge.user.auth.infrastructure.ratelimit;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
