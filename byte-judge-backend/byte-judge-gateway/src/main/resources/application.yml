@@ -1,22 +1,27 @@
 byte-judge:
-  web:
-    ingress: true
+  internal:
+    # Same controlled service identity as the user service expects for the gateway.
+    gateway-credential: ${BYTE_JUDGE_INTERNAL_GATEWAY_CREDENTIAL}
 spring:
   application:
     name: byte-judge-gateway
   profiles:
     default: local
+  config:
+    # Required external configuration: startup fails when Nacos is unreachable or when the
+    # service's Nacos document omits a required value. `optional:` is deliberately not used.
+    # Environment-specific credentials and connection endpoints stay in the controlled env/file.
+    import:
+      - "classpath:byte-judge-session.yml"
+      # The group comes from spring.cloud.nacos.config.group below; the location itself keeps
+      # no environment-specific placeholder so the Data ID stays stable across environments.
+      - "nacos:byte-judge-common.yml?refreshEnabled=false"
+      - "nacos:byte-judge-gateway.yml?refreshEnabled=false"
   mvc:
     # The gateway only proxies. Publishing request-handled events makes DispatcherServlet call
     # getSession(false), which would make this process load and re-save a session owned by the
     # user service; a save racing with the owner's delete leaves a partial Redis hash.
     publish-request-handled-events: false
-  session:
-    timeout: 30m
-    data:
-      redis:
-        repository-type: indexed
-        namespace: byte-judge:session
   cloud:
     gateway:
       server:
@@ -39,9 +44,14 @@ spring:
               predicates:
                 - Path=/api/v1/contests/**,/api/v1/me/contests/**,/api/v1/admin/contests/**
     nacos:
+      # Config connection settings only. The imported documents contain no credentials.
+      config:
+        server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
+        namespace: ${NACOS_CONFIG_NAMESPACE:}
+        group: ${NACOS_CONFIG_GROUP:BYTE_JUDGE}
       discovery:
         server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
-        group: BYTE_JUDGE
+        group: ${NACOS_DISCOVERY_GROUP:BYTE_JUDGE}
         ip: ${SERVICE_IP:127.0.0.1}
 server:
   port: ${SERVER_PORT:8080}

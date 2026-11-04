@@ -1,19 +1,41 @@
+byte-judge:
+  internal:
+    # Controlled service identity for the gateway's private identity verification call.
+    # Supplied by the environment; there is deliberately no insecure default.
+    gateway-credential: ${BYTE_JUDGE_INTERNAL_GATEWAY_CREDENTIAL}
+  auth:
+    rate-limit:
+      window: 15m
+      max-failures: 10
+      block-duration: 15m
+  web:
+    # Only these direct peers may supply a forwarding address used for login rate-limit accounting.
+    trusted-proxies: "127.0.0.1,0:0:0:0:0:0:0:1"
 spring:
   application:
     name: byte-judge-user-model
   profiles:
     default: local
-  session:
-    timeout: 30m
-    data:
-      redis:
-        repository-type: indexed
-        namespace: byte-judge:session
+  config:
+    # Required external configuration: startup fails when Nacos is unreachable or when the
+    # service's Nacos document omits a required value. `optional:` is deliberately not used.
+    # Environment-specific credentials and connection endpoints stay in the controlled env/file.
+    import:
+      - "classpath:byte-judge-session.yml"
+      # The group comes from spring.cloud.nacos.config.group below; the location itself keeps
+      # no environment-specific placeholder so the Data ID stays stable across environments.
+      - "nacos:byte-judge-common.yml?refreshEnabled=false"
+      - "nacos:byte-judge-user-model.yml?refreshEnabled=false"
   cloud:
     nacos:
+      # Config connection settings only. The imported documents contain no credentials.
+      config:
+        server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
+        namespace: ${NACOS_CONFIG_NAMESPACE:}
+        group: ${NACOS_CONFIG_GROUP:BYTE_JUDGE}
       discovery:
         server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
-        group: BYTE_JUDGE
+        group: ${NACOS_DISCOVERY_GROUP:BYTE_JUDGE}
         ip: ${SERVICE_IP:127.0.0.1}
 server:
   port: ${SERVER_PORT:8081}

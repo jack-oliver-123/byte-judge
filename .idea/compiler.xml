@@ -11,6 +11,7 @@
         <module name="byte-judge-gateway" />
         <module name="byte-judge-user-model" />
         <module name="byte-judge-submission-model" />
+        <module name="common-web" />
         <module name="common-core" />
         <module name="byte-judge-problem-model" />
       </profile>
@@ -26,6 +27,7 @@
       <module name="byte-judge-submission-model" options="-parameters" />
       <module name="byte-judge-user-model" options="-parameters" />
       <module name="common-core" options="-parameters" />
+      <module name="common-web" options="-parameters" />
     </option>
   </component>
 </project>
