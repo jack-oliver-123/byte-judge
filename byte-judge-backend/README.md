@@ -1,6 +1,6 @@
 # Byte Judge 后端
 
-Java 21 / Maven 3.9.15；Spring Boot 4.0.9、Cloud 2025.1.4、Alibaba 2025.1.0.0。根工程聚合 commons、gateway、models，共 10 个 POM；common-core 为普通 JAR，网关和五个业务服务为可执行 JAR。
+Java 21 / Maven 3.9.15；Spring Boot 4.0.9、Cloud 2025.1.4、Alibaba 2025.1.0.0。根工程聚合 commons、gateway、models，共 11 个 POM；common-core 与 common-web 为普通 JAR，网关和五个业务服务为可执行 JAR。
 
 ## 本地启动（PowerShell）
 
@@ -41,7 +41,7 @@ smoke-test.ps1 失败抛错并返回非零。验证六服务 UP 和 Nacos 健康
 
 网关按 docs/04 §2.3 显式配置四组 lb:// 路由，保留原始路径；没有服务名通配路由，judge、/internal/v1/** 和下游 Actuator 不匹配公共路由，返回 404。访问日志仅记录方法、路径和状态，本地探针用后可清理 log/<服务简称>/access，避免未来敏感参数进入日志。
 
-当前依赖按服务声明，根 POM 只管理版本与构建规则，两个聚合层保持纯 POM；common-core 保持无框架依赖的普通 JAR。Spring Boot 父工程管理编译、测试、打包插件及其生态依赖版本；Cloud、Alibaba、MyBatis-Plus 分别使用 BOM。Enforcer 检查 Java 21、Maven 3.9+，阻止 Boot2/3 MyBatis-Plus starter、WebFlux starter 和可执行服务模块间的代码依赖。
+当前依赖按服务声明，根 POM 只管理版本与构建规则，两个聚合层保持纯 POM；common-core 保持无框架依赖的普通 JAR，common-web 承载 MVC / Security / Session / 日志适配且只被网关与用户服务依赖。Spring Boot 父工程管理编译、测试、打包插件及其生态依赖版本；Cloud、Alibaba、MyBatis-Plus 分别使用 BOM。Enforcer 检查 Java 21、Maven 3.9+，阻止 Boot2/3 MyBatis-Plus starter、WebFlux starter 和可执行服务模块间的代码依赖。
 
 | 模块 | 主要依赖 |
 | --- | --- |
@@ -59,9 +59,15 @@ MyBatis-Plus 固定 3.5.18，在根 POM 通过 mybatis-plus.version 和 BOM 管�
 
 初始化命令、输入规则、退出码、密码参数和测试方式见 [管理员受控初始化](docs/admin-initialization.md)。通过 `java -jar <用户服务制品> --create-admin` 进入独立非 Web 模式，从交互控制台或受控 UTF-8 标准输入读取凭据；正常启动不创建管理员。允许多个管理员，重复账户只报错，不覆盖密码、不提升已有普通用户。命令只装配数据库与密码处理所需组件，不启动网关、Nacos、Redis 或 RabbitMQ。
 
-本切片仅实现管理员创建和密码持久化；登录、CSRF、共享 Session、权限及限频仍由后续任务实现。测试使用独立临时 MySQL，不操作现有本地库。
+该项测试使用独立临时 MySQL，不操作现有本地库。登录、当前身份查询与退出由下一节说明的 #7 切片实现；限频、实时身份核验与管理接口仍由后续任务实现。
 
-Spring Security Web、Spring Session、Sentinel 和 Nacos Config 在对应认证、共享会话、规则与配置装配阶段接入；本轮没有提前添加会改变默认访问策略的自动配置。starter 存在不能代表 Outbox、消息消费或迁移已实现。P-01 完整验证、其他原型与 AT 验收仍按架构文档执行，双 submission / judge 演练随后进行。
+## 登录、当前身份与退出
+
+接口协议、错误码、Cookie/CSRF 生命周期和手工调用步骤见 [登录、当前身份与退出接口](docs/auth-api.md)。网关与用户服务共享 Redis Session（indexed repository，命名空间 `byte-judge:session`，30 分钟闲置）；BJSESSION Cookie 在 local 显式关闭 Secure，其他环境默认 Secure。用户服务负责 CSRF 校验和登录/退出写入；网关仅转发 Cookie、CSRF 头和下游 Set-Cookie，既不读取也不写入会话（关闭 request-handled 事件并使用无操作 FlashMapManager），避免在用户服务轮换或撤销会话后回写残片。
+
+认证请求日志由 common-web 的基础过滤器生成请求标识（非入口只接受合法格式的下游标识），写入响应头与 MDC，日志仅含方法、状态和耗时，不含查询、请求体、Cookie 或凭据。MVC 与 Security 错误出口都输出统一 `code/data/message/requestId/serverTime` 结构并保留真实 HTTP 状态。
+
+Spring Security Web 与 Spring Session 的适配集中在 `common-web`，由网关和用户服务显式 `@Import`；Sentinel 与 Nacos Config 仍在对应规则与配置装配阶段接入。starter 存在不能代表 Outbox、消息消费或迁移已实现。P-01 完整验证、其他原型与 AT 验收仍按架构文档执行，双 submission / judge 演练随后进行。
 
 ## 停止与恢复
 
@@ -86,6 +92,10 @@ docker compose --env-file .env.local up -d --wait
 2026-11-04，任务 #6：新增管理员受控初始化、Argon2id 和正式账户迁移。Java 21.0.11 下执行 `mvnw clean package -B`，10 个 reactor 项全部 SUCCESS，34 项命令/持久化行为测试全部通过（0 failure、0 error、0 skipped），总耗时 3 分 55 秒。测试使用 Testcontainers 2.0.5 和独立 MySQL 8.4.13，覆盖输入边界、Unicode/空白、JSON 换行密码、随机盐、已有普通用户与管理员不覆盖、双进程并发、数据库失败、迁移关闭、普通 Web 启动不建账户及 TRACE 下摘要不泄露。完整输出位于 `log/build/admin-initialization-final-package.log`。
 
 同次对实际可执行 JAR 以 `-Xmx256m` 在另一个临时 MySQL 上验证：创建退出码 0、重复退出码 3、原账户与摘要保持不变、JSON 换行密码创建成功、Flyway 和 Argon2id 存储检查通过。临时容器等待 MySQL 健康后执行并在结束后移除，未向现有本地库写入管理员。制品包含 Security Crypto 7.0.8、Bouncy Castle 1.85.2、Flyway 11.14.1；密码校准与初始化说明见上文链接。`git diff --check` 通过。本次未重启现有六服务或重新运行全底座 `smoke-test.ps1`；注册、端口及路由未变，登录/共享会话等后续验收仍待实现。
+
+2026-11-04，任务 #7：经真实网关完成 CSRF、登录、当前身份查询与退出。Java 21.0.11 下执行 `mvnw.cmd -B clean package`，11 个 reactor 项全部 SUCCESS，44 项测试全部通过（0 failure、0 error、0 skipped），总耗时 4 分 48 秒：管理员初始化 34 项、认证 HTTP 10 项。认证测试通过网关发出真实 HTTP，使用独立 MySQL 8.4.13、Redis 7.4.12 与 Nacos v3.3.0，网关和用户服务为独立进程，管理员由 `--create-admin` 初始化，普通与禁用账户由测试夹具写入。覆盖 CSRF 获取与登录后轮换、登录与 Session ID 轮换、登录前 Cookie 无法取得身份、两个独立会话中退出只撤销当前会话并清除 Cookie、普通用户角色取自数据库、禁用账户仅在密码验证后返回 403、不存在账户与错误密码返回一致的 401、已登录再次登录返回 409、缺失或错误 CSRF 返回 403、重复/额外字段与非字符串/尾随 JSON 返回 400、非 JSON 返回 415、方法 405 与未知路径 404，以及请求标识在网关和用户服务间关联、日志不含密码。首轮运行暴露并修复两个真实缺陷：用户服务私有会话类无法被网关反序列化（最小身份契约移入 `common-core`），以及网关 DispatcherServlet 的 FlashMap 与 request-handled 事件触碰会话，在所有者轮换或撤销后回写只含 `lastAccessedTime` 的残片，使后续旧 Cookie 请求 500（网关改为不读取、不写入会话）。单个测试输出位于 `log/build/auth-slice7-final3.log`，完整构建位于 `log/build/auth-slice7-package2.log`。
+
+同次把 #6 的“正常 Web 启动”测试补上临时 Redis：用户服务现在按共享会话依赖 Redis，该测试原先只准备 MySQL。该命令路径仍不依赖 Redis，未向现有本地库写入数据。本次未重启本地六服务或重新执行全底座 `smoke-test.ps1`（注册、端口与路由未变）；会话并发撤销（#9）、实时身份核验、管理接口、限频与 CORS 未验证。
 
 实测镜像摘要（标签对应的下载制品，生产发布前需重新审查并冻结）：
 

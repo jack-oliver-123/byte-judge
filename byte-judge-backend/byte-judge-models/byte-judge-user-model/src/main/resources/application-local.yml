@@ -1,3 +1,6 @@
+byte-judge:
+  session:
+    cookie-secure: false
 spring:
   datasource:
     url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/bj_user?connectionTimeZone=UTC

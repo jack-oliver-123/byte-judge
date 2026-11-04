@@ -10,12 +10,10 @@
 
 ## 本地执行（PowerShell）
 
-在后端根目录中执行。下面只改变当前进程的 Java 环境，以避开旧 `use-java21.ps1` 在 Windows PowerShell 下读取标准错误输出的问题：
+在后端根目录中执行。Java 选择脚本只改变当前进程环境，使用 `--version` 兼容 Windows PowerShell 的错误流处理：
 
 ```powershell
-$env:JAVA_HOME = 'C:\Develop\JDK\jdk21'
-$env:Path = "$env:JAVA_HOME\bin;$env:Path"
-java --version
+. ./scripts/use-java21.ps1
 . ./scripts/local-env.ps1
 ./mvnw.cmd -pl :byte-judge-user-model -am package -DskipTests
 java -jar ./byte-judge-models/byte-judge-user-model/target/byte-judge-user-model-0.0.1-SNAPSHOT.jar --create-admin

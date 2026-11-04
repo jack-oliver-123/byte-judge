@@ -4,6 +4,8 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.mysql.MySQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
@@ -23,6 +25,11 @@ class AdminInitializationTest {
             .withDatabaseName("admin_creation_test")
             .withUsername("admin_creation_test")
             .withPassword(UUID.randomUUID().toString());
+    private static final String REDIS_PASSWORD = UUID.randomUUID().toString();
+    /** Normal web startup wires the shared Redis session; the command path must not need it. */
+    private static final GenericContainer<?> REDIS = new GenericContainer<>(DockerImageName.parse("redis:7.4.12"))
+            .withExposedPorts(6379).withCommand("redis-server", "--requirepass", REDIS_PASSWORD)
+            .waitingFor(Wait.forLogMessage(".*Ready to accept connections.*\\n", 1));
 
     @TempDir
     static Path temporaryDirectory;
@@ -30,10 +37,12 @@ class AdminInitializationTest {
     @BeforeAll
     static void startDatabase() {
         DATABASE.start();
+        REDIS.start();
     }
 
     @AfterAll
     static void stopDatabase() {
+        REDIS.stop();
         DATABASE.stop();
     }
 
@@ -407,6 +416,11 @@ class AdminInitializationTest {
         environment.put("SPRING_DATASOURCE_PASSWORD", DATABASE.getPassword());
         environment.put("SPRING_CLOUD_NACOS_DISCOVERY_ENABLED", "false");
         environment.put("SPRING_CLOUD_DISCOVERY_ENABLED", "false");
+        environment.put("SPRING_DATA_REDIS_HOST", REDIS.getHost());
+        environment.put("SPRING_DATA_REDIS_PORT", Integer.toString(REDIS.getMappedPort(6379)));
+        environment.put("SPRING_DATA_REDIS_PASSWORD", REDIS_PASSWORD);
+        environment.put("SPRING_DATA_REDIS_CONNECT_TIMEOUT", "5s");
+        environment.put("SPRING_DATA_REDIS_TIMEOUT", "10s");
         environment.put("SERVER_PORT", "0");
         environment.put("MANAGEMENT_SERVER_PORT", "0");
         environment.put("BYTE_JUDGE_LOG_DIR", temporaryDirectory.resolve("application-logs").toString());

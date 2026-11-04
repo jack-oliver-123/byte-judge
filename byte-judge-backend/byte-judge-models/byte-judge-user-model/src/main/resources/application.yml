@@ -3,6 +3,12 @@ spring:
     name: byte-judge-user-model
   profiles:
     default: local
+  session:
+    timeout: 30m
+    data:
+      redis:
+        repository-type: indexed
+        namespace: byte-judge:session
   cloud:
     nacos:
       discovery:

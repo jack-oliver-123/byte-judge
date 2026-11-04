@@ -1,3 +1,14 @@
+byte-judge:
+  session:
+    cookie-secure: false
+spring:
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:16379}
+      password: ${REDIS_PASSWORD}
+      connect-timeout: 3s
+      timeout: 3s
 server:
   address: 127.0.0.1
   tomcat:

@@ -1,8 +1,22 @@
+byte-judge:
+  web:
+    ingress: true
 spring:
   application:
     name: byte-judge-gateway
   profiles:
     default: local
+  mvc:
+    # The gateway only proxies. Publishing request-handled events makes DispatcherServlet call
+    # getSession(false), which would make this process load and re-save a session owned by the
+    # user service; a save racing with the owner's delete leaves a partial Redis hash.
+    publish-request-handled-events: false
+  session:
+    timeout: 30m
+    data:
+      redis:
+        repository-type: indexed
+        namespace: byte-judge:session
   cloud:
     gateway:
       server:

@@ -17,5 +17,6 @@
 
     <modules>
         <module>common-core</module>
+        <module>common-web</module>
     </modules>
 </project>
