@@ -4,6 +4,10 @@ import com.github.dockerjava.api.model.ExposedPort;
 import com.github.dockerjava.api.model.PortBinding;
 import com.github.dockerjava.api.model.Ports;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.connection.RedisPassword;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.argon2.Argon2PasswordEncoder;
 import org.springframework.security.crypto.password.DelegatingPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -910,6 +914,8 @@ class AuthenticationFlowTest {
         private GenericContainer<?> nacos;
         private GenericContainer<?> redis;
         private String redisPassword;
+        private LettuceConnectionFactory redisConnectionFactory;
+        private StringRedisTemplate redisTemplate;
         private Map<String, String> userEnvironment = Map.of();
 
         void start() throws Exception {
@@ -931,6 +937,14 @@ class AuthenticationFlowTest {
                     .withExposedPorts(6379).withCommand("redis-server", "--requirepass", redisPassword)
                     .waitingFor(Wait.forLogMessage(".*Ready to accept connections.*\\n", 1)));
             redis.start();
+            // Read the rate-limit keys through a direct client: a docker exec round trip can outlast the
+            // short test block and turn a TTL assertion into a false failure under load.
+            var redisConfiguration = new RedisStandaloneConfiguration(
+                    redis.getHost(), redis.getMappedPort(6379));
+            redisConfiguration.setPassword(RedisPassword.of(redisPassword));
+            redisConnectionFactory = new LettuceConnectionFactory(redisConfiguration);
+            redisConnectionFactory.afterPropertiesSet();
+            redisTemplate = new StringRedisTemplate(redisConnectionFactory);
             nacos = startNacos();
             publishNacosConfigs();
 
@@ -1323,22 +1337,18 @@ class AuthenticationFlowTest {
             return browser.perform(builder);
         }
 
-        long redisPttl(String key) throws Exception {
-            var result = redis.execInContainer("redis-cli", "-a", redisPassword,
-                    "--no-auth-warning", "PTTL", key);
-            assertThat(result.getExitCode()).as(result.getStderr()).isZero();
-            return Long.parseLong(result.getStdout().strip());
+        long redisPttl(String key) {
+            Long ttl = redisTemplate.getExpire(key, TimeUnit.MILLISECONDS);
+            return ttl == null ? -2L : ttl;
         }
 
         String loginRateLimitNamespace() {
             return environment.get("BYTE_JUDGE_AUTH_RATE_LIMIT_NAMESPACE");
         }
 
-        List<String> redisKeys(String pattern) throws Exception {
-            var result = redis.execInContainer("redis-cli", "-a", redisPassword,
-                    "--no-auth-warning", "--scan", "--pattern", pattern);
-            assertThat(result.getExitCode()).as(result.getStderr()).isZero();
-            return result.getStdout().lines().map(String::strip).filter(line -> !line.isEmpty()).toList();
+        List<String> redisKeys(String pattern) {
+            var keys = redisTemplate.keys(pattern);
+            return keys == null ? List.of() : keys.stream().sorted().toList();
         }
 
         /** Direct owner call used to prove an untrusted peer cannot choose the rate-limit source. */
@@ -1658,6 +1668,9 @@ class AuthenticationFlowTest {
 
         @Override
         public void close() throws Exception {
+            if (redisConnectionFactory != null) {
+                redisConnectionFactory.destroy();
+            }
             Exception failure = null;
             for (var resource : resources.reversed()) {
                 try {
