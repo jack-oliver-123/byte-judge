@@ -53,12 +53,19 @@ public final class IdentityRevalidationFilter extends OncePerRequestFilter {
             chain.doFilter(request, response);
             return;
         }
+        var session = request.getSession(false);
+        if (session == null) {
+            // An authenticated context without its owning session cannot be verified.
+            SecurityContextHolder.clearContext();
+            SecurityErrorWriter.writeError(request, response, ApiError.NOT_AUTHENTICATED);
+            return;
+        }
         try {
-            revalidator.revalidate(identity);
+            revalidator.revalidate(session.getId(), identity);
         } catch (SessionRejectedException rejected) {
-            invalidate(request);
+            invalidate(session);
             audit.record(new AuthAuditEntry(AuthEvent.IDENTITY_CHECK, AuthOutcome.REJECTED,
-                    identity.userId(), identity.account(), "AUTHORITATIVE_STATE_CHANGED",
+                    identity.userId(), identity.account(), rejected.reason(),
                     RequestLogFilter.requestId(request)));
             SecurityErrorWriter.writeError(request, response, ApiError.NOT_AUTHENTICATED);
             return;
@@ -70,11 +77,11 @@ public final class IdentityRevalidationFilter extends OncePerRequestFilter {
         chain.doFilter(request, response);
     }
 
-    private static void invalidate(HttpServletRequest request) {
-        var session = request.getSession(false);
-        if (session != null) {
+    private static void invalidate(jakarta.servlet.http.HttpSession session) {
+        try {
             session.invalidate();
+        } finally {
+            SecurityContextHolder.clearContext();
         }
-        SecurityContextHolder.clearContext();
     }
 }

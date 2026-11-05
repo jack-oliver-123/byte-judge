@@ -5,6 +5,7 @@ import com.jack.bytejudge.common.core.security.SessionIdentity;
 import com.jack.bytejudge.common.web.RequestLogFilter;
 import com.jack.bytejudge.user.auth.application.IdentityRevalidator;
 import com.jack.bytejudge.user.auth.application.port.AuthAudit;
+import com.jack.bytejudge.user.auth.application.port.SessionRevocation;
 import com.jack.bytejudge.user.account.domain.AccountRole;
 import com.jack.bytejudge.user.auth.domain.NotAuthenticatedException;
 import com.jack.bytejudge.user.auth.domain.PermissionDeniedException;
@@ -33,14 +34,16 @@ import org.springframework.web.bind.annotation.RestController;
 public class IdentityVerificationController {
     private final FindByIndexNameSessionRepository<? extends Session> sessions;
     private final IdentityRevalidator revalidator;
+    private final SessionRevocation revocations;
     private final AuthAudit audit;
     private final InternalCallGuard guard;
 
     public IdentityVerificationController(FindByIndexNameSessionRepository<? extends Session> sessions,
-                                          IdentityRevalidator revalidator, AuthAudit audit,
-                                          InternalCallGuard guard) {
+                                          IdentityRevalidator revalidator, SessionRevocation revocations,
+                                          AuthAudit audit, InternalCallGuard guard) {
         this.sessions = sessions;
         this.revalidator = revalidator;
+        this.revocations = revocations;
         this.audit = audit;
         this.guard = guard;
     }
@@ -55,6 +58,14 @@ public class IdentityVerificationController {
         }
         IdentityVerificationRequest body = IdentityVerificationRequest.parse(rawBody);
         String sessionId = body.sessionId();
+        // The durable record decides before Redis is consulted. A stale node can recreate a
+        // partial or complete hash after logout; that must not re-authorize the identity.
+        if (revocations.isRevoked(sessionId)) {
+            delete(sessionId);
+            audit.record(new AuthAuditEntry(AuthEvent.IDENTITY_CHECK, AuthOutcome.REJECTED,
+                    null, null, SessionRejectedException.SESSION_REVOKED, requestId));
+            throw new NotAuthenticatedException();
+        }
         Session session = sessions.findById(sessionId);
         SessionIdentity identity = identityOf(session);
         if (identity == null) {
@@ -62,7 +73,7 @@ public class IdentityVerificationController {
             throw new NotAuthenticatedException();
         }
         try {
-            AccountSnapshot current = revalidator.revalidate(identity);
+            AccountSnapshot current = revalidator.revalidate(sessionId, identity);
             if (body.path().startsWith("/api/v1/admin/")
                     && current.role() != AccountRole.ADMIN) {
                 audit.record(new AuthAuditEntry(AuthEvent.ADMIN_ACCESS, AuthOutcome.DENIED,
@@ -74,7 +85,7 @@ public class IdentityVerificationController {
             // The stale session is removed on the authoritative side, not merely ignored.
             delete(sessionId);
             audit.record(new AuthAuditEntry(AuthEvent.IDENTITY_CHECK, AuthOutcome.REJECTED,
-                    identity.userId(), identity.account(), "AUTHORITATIVE_STATE_CHANGED", requestId));
+                    identity.userId(), identity.account(), rejected.reason(), requestId));
             throw rejected;
         }
     }

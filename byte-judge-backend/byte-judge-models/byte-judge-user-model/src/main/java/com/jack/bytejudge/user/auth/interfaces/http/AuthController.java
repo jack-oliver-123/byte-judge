@@ -4,6 +4,7 @@ import com.jack.bytejudge.common.core.response.ApiResponse;
 import com.jack.bytejudge.common.core.security.SessionIdentity;
 import com.jack.bytejudge.common.web.RequestLogFilter;
 import com.jack.bytejudge.user.auth.application.port.AuthAudit;
+import com.jack.bytejudge.user.auth.application.port.SessionRevocation;
 import com.jack.bytejudge.user.auth.domain.AlreadyAuthenticatedException;
 import com.jack.bytejudge.user.auth.domain.NotAuthenticatedException;
 import com.jack.bytejudge.user.auth.domain.model.AuthAuditEntry;
@@ -40,6 +41,7 @@ public class AuthController {
     private final AuthenticationManager authenticator;
     private final SecurityContextRepository securityContextRepository;
     private final AuthAudit audit;
+    private final SessionRevocation revocations;
     private final ClientAddressResolver clientAddressResolver;
     private final ChangeSessionIdAuthenticationStrategy sessionRotation = new ChangeSessionIdAuthenticationStrategy();
     private final CsrfAuthenticationStrategy csrfRotation;
@@ -48,10 +50,11 @@ public class AuthController {
 
     public AuthController(AuthenticationManager authenticator, CsrfTokenRepository csrfTokenRepository,
                           SecurityContextRepository securityContextRepository, AuthAudit audit,
-                          ClientAddressResolver clientAddressResolver) {
+                          SessionRevocation revocations, ClientAddressResolver clientAddressResolver) {
         this.authenticator = authenticator;
         this.securityContextRepository = securityContextRepository;
         this.audit = audit;
+        this.revocations = revocations;
         this.clientAddressResolver = clientAddressResolver;
         this.csrfRotation = new CsrfAuthenticationStrategy(csrfTokenRepository);
         this.csrfRotation.setRequestHandler(new CsrfTokenRequestAttributeHandler());
@@ -114,10 +117,18 @@ public class AuthController {
             throw new NotAuthenticatedException();
         }
         var identity = (SessionIdentity) current.getPrincipal();
+        var session = request.getSession(false);
+        if (session == null) {
+            throw new NotAuthenticatedException();
+        }
+        // The durable tombstone is committed before success is acknowledged. If it cannot be
+        // written, logout fails instead of leaving the browser believing the session is gone.
+        revocations.revoke(session.getId());
         audit.record(new AuthAuditEntry(AuthEvent.LOGOUT, AuthOutcome.SUCCESS, identity.userId(),
                 identity.account(), null, RequestLogFilter.requestId(request)));
         // Clear the CSRF token first, then invalidate the session: Spring Session expires the cookie on
-        // invalidation, and only the current session id is revoked.
+        // invalidation, and only the current session id is revoked. Other independent sessions are
+        // untouched because the account-wide authEpoch is not changed.
         csrfLogout.logout(request, response, current);
         sessionLogout.logout(request, response, current);
         return ApiResponse.success(null, RequestLogFilter.requestId(request));
