@@ -2,6 +2,7 @@ package com.jack.bytejudge.user.auth.interfaces.http;
 
 import com.jack.bytejudge.common.core.response.ApiError;
 import com.jack.bytejudge.common.core.security.SessionIdentity;
+import com.jack.bytejudge.common.web.ProtectedPaths;
 import com.jack.bytejudge.common.web.RequestLogFilter;
 import com.jack.bytejudge.common.web.SecurityErrorWriter;
 import com.jack.bytejudge.user.auth.application.IdentityRevalidator;
@@ -38,8 +39,7 @@ public final class IdentityRevalidationFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        String path = request.getRequestURI();
-        return !(path.equals("/api/v1/users/me") || path.startsWith("/api/v1/admin/"));
+        return !ProtectedPaths.isProtected(ProtectedPaths.routingPath(request));
     }
 
     @Override

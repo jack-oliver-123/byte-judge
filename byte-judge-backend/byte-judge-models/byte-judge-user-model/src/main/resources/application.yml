@@ -11,6 +11,11 @@ byte-judge:
   web:
     # Only these direct peers may supply a forwarding address used for login rate-limit accounting.
     trusted-proxies: "127.0.0.1,0:0:0:0:0:0:0:1"
+  audit:
+    # Snowflake identifiers must be unique across every deployed user-service instance; there is
+    # deliberately no default so a missing deployment value fails closed instead of colliding.
+    worker-id: ${BYTE_JUDGE_AUDIT_WORKER_ID}
+    datacenter-id: ${BYTE_JUDGE_AUDIT_DATACENTER_ID}
 spring:
   application:
     name: byte-judge-user-model

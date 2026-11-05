@@ -33,9 +33,7 @@ class UntrustedHeaderFilterTest {
         assertThat(downstream.getHeader("X-User-Id")).as("forged identity is stripped").isNull();
         assertThat(downstream.getHeader("x-user-role")).isNull();
         assertThat(downstream.getHeader("X-Internal-Token")).isNull();
-        assertThat(downstream.getHeader("X-Internal-Client-Address"))
-                .as("the gateway stamps its own trusted client address after this filter")
-                .isNull();
+        assertThat(downstream.getHeader("X-Internal-Client-Address")).isNull();
         assertThat(downstream.getHeader("Forwarded")).isNull();
         assertThat(downstream.getHeader("X-Forwarded-For")).isNull();
         assertThat(downstream.getHeader("X-Forwarded-Proto")).isNull();

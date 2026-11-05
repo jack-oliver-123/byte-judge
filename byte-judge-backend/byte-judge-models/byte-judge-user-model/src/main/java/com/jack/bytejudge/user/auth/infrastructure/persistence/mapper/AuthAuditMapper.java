@@ -8,9 +8,9 @@ import org.apache.ibatis.annotations.Param;
 @Mapper
 public interface AuthAuditMapper {
     @Insert("""
-            INSERT INTO auth_audit (user_id, account, event, outcome, reason, request_id)
-            VALUES (#{entry.userId}, #{entry.account}, #{event}, #{outcome}, #{entry.reason}, #{entry.requestId})
+            INSERT INTO auth_audit (id, userId, account, event, outcome, reason, requestId)
+            VALUES (#{id}, #{entry.userId}, #{entry.account}, #{event}, #{outcome}, #{entry.reason}, #{entry.requestId})
             """)
-    void insert(@Param("entry") AuthAuditEntry entry,
+    void insert(@Param("id") long id, @Param("entry") AuthAuditEntry entry,
                 @Param("event") String event, @Param("outcome") String outcome);
 }

@@ -1,6 +1,7 @@
 package com.jack.bytejudge.gateway.web;
 
 import com.jack.bytejudge.common.core.response.ApiError;
+import com.jack.bytejudge.common.web.ProtectedPaths;
 import com.jack.bytejudge.common.web.RequestLogFilter;
 import com.jack.bytejudge.common.web.SecurityErrorWriter;
 import com.jack.bytejudge.gateway.identity.IdentityVerifier;
@@ -30,12 +31,12 @@ public final class GatewayIdentityVerificationFilter extends OncePerRequestFilte
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain chain) throws ServletException, IOException {
-        String path = request.getRequestURI();
-        if (path.startsWith("/internal/")) {
+        String path = ProtectedPaths.routingPath(request);
+        if (ProtectedPaths.isInternal(path)) {
             SecurityErrorWriter.writeError(request, response, ApiError.NOT_FOUND);
             return;
         }
-        if (!isProtected(path)) {
+        if (!ProtectedPaths.isProtected(path)) {
             chain.doFilter(request, response);
             return;
         }
@@ -64,16 +65,11 @@ public final class GatewayIdentityVerificationFilter extends OncePerRequestFilte
             SecurityErrorWriter.writeError(request, response, ApiError.SYSTEM_UNAVAILABLE);
             return;
         }
-        if (path.startsWith("/api/v1/admin/") && !"admin".equals(result.role())) {
+        if (ProtectedPaths.isAdministrative(path) && !"admin".equals(result.role())) {
             SecurityErrorWriter.writeError(request, response, ApiError.ACCESS_DENIED);
             return;
         }
         chain.doFilter(request, response);
-    }
-
-    static boolean isProtected(String path) {
-        return path.equals("/api/v1/users/me") || path.startsWith("/api/v1/admin/")
-                || path.startsWith("/api/v1/me/");
     }
 
     private static String sessionId(HttpServletRequest request) {

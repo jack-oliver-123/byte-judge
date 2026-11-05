@@ -22,7 +22,7 @@ $LASTEXITCODE
 
 如基础设施尚未启动，先按后端 README 执行启动步骤。命令会依次提示账户、密码和确认密码；在真实终端中密码输入不回显。不要把密码放进命令行参数、脚本源码、可提交配置或终端历史。
 
-命令从正常服务入口分流到专用非 Web 上下文，只装配数据库、Flyway、MyBatis 和密码摘要所需组件；不启动 HTTP 或管理端口，也不注册 Nacos、不依赖 Redis/RabbitMQ。无 `--create-admin` 参数时仍按原方式启动服务，不自动创建管理员。
+命令从正常服务入口分流到专用非 Web 上下文，使用独立的 `admin-command.yml` 配置根（local 数据库配置在 `admin-command-local.yml`），排除正常 Web 服务的 Nacos Config 导入，只装配数据库、Flyway、MyBatis 和密码摘要所需组件；不启动 HTTP 或管理端口，也不连接 Nacos、不依赖 Redis/RabbitMQ。命令固定关闭底层启动诊断，数据库错误仅输出安全标识。无 `--create-admin` 参数时仍按原方式启动服务，要求正常的 Nacos 配置，不自动创建管理员。
 
 非 local 环境使用受控环境设置 `SPRING_PROFILES_ACTIVE`、`SPRING_DATASOURCE_URL`、`SPRING_DATASOURCE_USERNAME`、`SPRING_DATASOURCE_PASSWORD` 等连接信息。初始化必须允许执行正式迁移；不得通过清库或打开自动 baseline 绕过不一致的已有数据库。复用已有非空库而没有 Flyway 历史时，应先受控核对和纳管现有结构。
 

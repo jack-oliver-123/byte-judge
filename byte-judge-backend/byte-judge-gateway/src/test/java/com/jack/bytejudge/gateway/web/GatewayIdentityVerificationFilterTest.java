@@ -87,6 +87,22 @@ class GatewayIdentityVerificationFilterTest {
     }
 
     @Test
+    void percentEncodedProtectedPathsCannotSkipVerification() throws Exception {
+        for (String path : new String[]{"/api/v1/%61dmin/users/me", "/api/v1/users/%6de",
+                "/internal/%76%31/identity/verify"}) {
+            var downstream = new MockFilterChain();
+            var response = invoke(requestWithSession(), downstream,
+                    (session, verified, request) -> {
+                        assertThat(verified).as("verification receives the decoded routing path")
+                                .doesNotContain("%");
+                        throw new IllegalStateException("authority unavailable");
+                    }, path);
+            assertThat(response.getStatus()).as(path).isIn(404, 503);
+            assertThat(downstream.getRequest()).as(path).isNull();
+        }
+    }
+
+    @Test
     void internalAndUnmappedPathsAreNotForwardedByThePublicEntry() throws Exception {
         var downstream = new MockFilterChain();
         var response = invoke(new MockHttpServletRequest(), downstream,

@@ -289,6 +289,20 @@ class AuthenticationFlowTest {
         assertThat(userLog).contains("method=POST");
         assertThat(userLog).as("request logs never contain credentials").doesNotContain(
                 system.administrator.password(), system.ordinaryUser.password());
+
+        var protectedResponse = system.get(browser, "/api/v1/admin/users/me");
+        String protectedRequestId = protectedResponse.headers().firstValue("X-Request-ID").orElseThrow();
+        assertThat(protectedResponse.statusCode()).isEqualTo(200);
+        system.awaitUserApplicationLog("requestId=" + protectedRequestId);
+        system.awaitGatewayApplicationLog("requestId=" + protectedRequestId);
+        String csrfToken = system.csrf(browser).token();
+        for (Path log : List.of(system.userConsoleLog(), system.userApplicationLog(),
+                system.gatewayApplicationLog())) {
+            assertThat(Files.readString(log, StandardCharsets.UTF_8))
+                    .as("internal verification must not log secrets: " + log)
+                    .doesNotContain(system.internalCredential, sessionCookieValue(browser),
+                            csrfToken, system.administrator.password());
+        }
     }
 
     @Test
@@ -517,6 +531,68 @@ class AuthenticationFlowTest {
         assertThat(system.login(administrator, system.csrf(administrator), system.administrator).response
                 .statusCode()).isEqualTo(200);
         assertThat(system.directGet(administrator, "/api/v1/admin/users/me", Map.of()).statusCode()).isEqualTo(200);
+    }
+
+    @Test
+    void directUserServiceRevalidatesDisabledAccountsAndEpochWithoutGatewayHelp() throws Exception {
+        var disabledLater = system.uniqueFixtureUser("dirst", "user", "normal");
+        var browser = system.newBrowser();
+        assertThat(system.login(browser, system.csrf(browser), disabledLater).response.statusCode()).isEqualTo(200);
+        assertThat(system.directGet(browser, "/api/v1/users/me", Map.of()).statusCode()).isEqualTo(200);
+        system.setStatus(disabledLater.account(), "disabled");
+        assertThat(system.directGet(browser, "/api/v1/users/me", Map.of()).statusCode())
+                .as("the owner checks disabled status on the next direct request").isEqualTo(401);
+        system.setStatus(disabledLater.account(), "normal");
+        assertThat(system.directGet(browser, "/api/v1/users/me", Map.of()).statusCode())
+                .as("restoring status cannot revive the invalidated direct session").isEqualTo(401);
+
+        var changedEpoch = system.uniqueFixtureUser("direp", "admin", "normal");
+        var administrator = system.newBrowser();
+        assertThat(system.login(administrator, system.csrf(administrator), changedEpoch).response.statusCode())
+                .isEqualTo(200);
+        system.bumpAuthEpoch(changedEpoch.account());
+        assertThat(system.directGet(administrator, "/api/v1/admin/users/me", Map.of()).statusCode())
+                .as("the owner independently rejects an old authEpoch").isEqualTo(401);
+    }
+
+    @Test
+    void encodedProtectedPathsCannotBypassLiveStateChecks() throws Exception {
+        for (String path : List.of("/api/v1/%61dmin/users/me", "/api/v1/users/%6de")) {
+            var account = system.uniqueFixtureUser("enc", "admin", "normal");
+            var directBrowser = system.newBrowser();
+            var gatewayBrowser = system.newBrowser();
+            assertThat(system.login(directBrowser, system.csrf(directBrowser), account).response.statusCode())
+                    .isEqualTo(200);
+            assertThat(system.login(gatewayBrowser, system.csrf(gatewayBrowser), account).response.statusCode())
+                    .isEqualTo(200);
+            assertThat(system.directGet(directBrowser, path, Map.of()).statusCode())
+                    .as("the encoded alias reaches the same authenticated endpoint: " + path).isEqualTo(200);
+            system.setStatus(account.account(), "disabled");
+            assertThat(system.directGet(directBrowser, path, Map.of()).statusCode())
+                    .as("encoded aliases must revalidate the direct session: " + path).isEqualTo(401);
+            assertThat(system.getNoWait(gatewayBrowser, path).statusCode())
+                    .as("encoded aliases must revalidate at the gateway: " + path).isEqualTo(401);
+        }
+    }
+
+    @Test
+    void changedRoleRevokesGatewayAndDirectSessionsImmediately() throws Exception {
+        var account = system.uniqueFixtureUser("role", "admin", "normal");
+        var gatewayBrowser = system.newBrowser();
+        var directBrowser = system.newBrowser();
+        assertThat(system.login(gatewayBrowser, system.csrf(gatewayBrowser), account).response.statusCode())
+                .isEqualTo(200);
+        assertThat(system.login(directBrowser, system.csrf(directBrowser), account).response.statusCode())
+                .isEqualTo(200);
+        system.setRole(account.account(), "user");
+        assertThat(system.getNoWait(gatewayBrowser, "/api/v1/admin/users/me").statusCode())
+                .as("the gateway rejects a session with a stale role").isEqualTo(401);
+        assertThat(system.directGet(directBrowser, "/api/v1/admin/users/me", Map.of()).statusCode())
+                .as("the owner checks the separate direct session independently").isEqualTo(401);
+        var fresh = system.newBrowser();
+        assertThat(system.login(fresh, system.csrf(fresh), account).response.statusCode()).isEqualTo(200);
+        assertThat(system.getNoWait(fresh, "/api/v1/admin/users/me").statusCode())
+                .as("fresh authentication carries the current user role").isEqualTo(403);
     }
 
     @Test
@@ -968,6 +1044,8 @@ class AuthenticationFlowTest {
             // Short block duration for rate-limit acceptance; production defaults stay 10/15m.
             environment.put("BYTE_JUDGE_AUTH_RATE_LIMIT_BLOCK_DURATION", "3s");
             environment.put("BYTE_JUDGE_AUTH_RATE_LIMIT_NAMESPACE", "auth-http:" + runId + ":login");
+            environment.put("BYTE_JUDGE_AUDIT_WORKER_ID", "0");
+            environment.put("BYTE_JUDGE_AUDIT_DATACENTER_ID", "0");
             // External configuration is part of this slice's contract: both services import the
             // required documents below from the disposable Nacos container. Do not pin
             // SPRING_CONFIG_IMPORT here, or the test would bypass the deployment path.
@@ -1508,6 +1586,16 @@ class AuthenticationFlowTest {
             }
         }
 
+        void setRole(String account, String role) throws Exception {
+            try (var connection = connect();
+                 var statement = connection.prepareStatement(
+                         "UPDATE user_account SET role = ? WHERE account = ?")) {
+                statement.setString(1, role);
+                statement.setString(2, account);
+                assertThat(statement.executeUpdate()).isEqualTo(1);
+            }
+        }
+
         void bumpAuthEpoch(String account) throws Exception {
             try (var connection = connect();
                  var statement = connection.prepareStatement(
@@ -1535,7 +1623,7 @@ class AuthenticationFlowTest {
             try (var connection = connect();
                  var statement = connection.createStatement();
                  var rows = statement.executeQuery(
-                         "SELECT user_id, account, event, outcome, reason, request_id FROM auth_audit")) {
+                         "SELECT userId, account, event, outcome, reason, requestId FROM auth_audit")) {
                 while (rows.next()) {
                     for (int column = 1; column <= 6; column++) {
                         dump.append(rows.getString(column)).append('|');
