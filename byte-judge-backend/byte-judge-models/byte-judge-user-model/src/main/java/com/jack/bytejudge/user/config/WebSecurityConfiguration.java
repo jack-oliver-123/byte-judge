@@ -15,16 +15,19 @@ import com.jack.bytejudge.user.auth.application.port.AccountLookup;
 import com.jack.bytejudge.user.auth.application.port.AuthAudit;
 import com.jack.bytejudge.user.auth.application.port.LoginAttemptLimiter;
 import com.jack.bytejudge.user.auth.application.port.PasswordMatcher;
+import com.jack.bytejudge.user.auth.application.port.SessionRevocation;
 import com.jack.bytejudge.user.auth.domain.AccountDisabledException;
 import com.jack.bytejudge.user.auth.domain.InvalidCredentialsException;
 import com.jack.bytejudge.user.auth.domain.model.AuthAuditEntry;
 import com.jack.bytejudge.user.auth.domain.model.AuthEvent;
 import com.jack.bytejudge.user.auth.domain.model.AuthOutcome;
 import com.jack.bytejudge.user.auth.infrastructure.persistence.mapper.AuthAuditMapper;
+import com.jack.bytejudge.user.auth.infrastructure.persistence.mapper.RevokedSessionMapper;
 import com.jack.bytejudge.user.auth.infrastructure.persistence.mapper.UserAccountMapper;
 import com.jack.bytejudge.user.auth.infrastructure.persistence.repository.MybatisAccountAuthority;
 import com.jack.bytejudge.user.auth.infrastructure.persistence.repository.MybatisAccountLookup;
 import com.jack.bytejudge.user.auth.infrastructure.persistence.repository.MybatisAuthAudit;
+import com.jack.bytejudge.user.auth.infrastructure.persistence.repository.MybatisSessionRevocation;
 import com.jack.bytejudge.user.auth.interfaces.http.IdentityRevalidationFilter;
 import com.jack.bytejudge.user.auth.interfaces.internal.InternalCallGuard;
 import org.mybatis.spring.annotation.MapperScan;
@@ -160,8 +163,8 @@ public class WebSecurityConfiguration {
     }
 
     @Bean
-    IdentityRevalidator identityRevalidator(AccountAuthority accounts) {
-        return new IdentityRevalidator(accounts);
+    IdentityRevalidator identityRevalidator(AccountAuthority accounts, SessionRevocation revocations) {
+        return new IdentityRevalidator(accounts, revocations);
     }
 
     @Bean
@@ -169,6 +172,15 @@ public class WebSecurityConfiguration {
                         @Value("${byte-judge.audit.worker-id}") long workerId,
                         @Value("${byte-judge.audit.datacenter-id}") long datacenterId) {
         return new MybatisAuthAudit(mapper, new DefaultIdentifierGenerator(workerId, datacenterId));
+    }
+
+    @Bean
+    SessionRevocation sessionRevocation(RevokedSessionMapper mapper,
+                                        @Value("${byte-judge.audit.worker-id}") long workerId,
+                                        @Value("${byte-judge.audit.datacenter-id}") long datacenterId) {
+        // Snowflake identifiers must stay unique across instances; the shared user-service
+        // deployment values already enforce that for audit rows.
+        return new MybatisSessionRevocation(mapper, new DefaultIdentifierGenerator(workerId, datacenterId));
     }
 
     @Bean

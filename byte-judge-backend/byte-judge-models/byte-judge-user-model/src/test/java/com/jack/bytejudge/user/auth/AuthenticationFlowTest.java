@@ -976,6 +976,8 @@ class AuthenticationFlowTest {
     /** Actual service processes and disposable infrastructure, reusable by later HTTP flow slices. */
     static final class AuthenticationSystem implements AutoCloseable {
         private final String runId = UUID.randomUUID().toString().replace("-", "");
+        private final Map<String, String> extraEnvironment;
+        private final int userInstances;
         private final java.util.concurrent.atomic.AtomicInteger probeCounter = new java.util.concurrent.atomic.AtomicInteger();
         private final String discoveryGroup = "AUTH_HTTP_" + runId;
         private final String configGroup = "AUTH_CONFIG_" + runId;
@@ -998,7 +1000,9 @@ class AuthenticationFlowTest {
         private int gatewayPort;
         private int userPort;
         private int userHealthPort;
+        private int secondUserPort;
         private RunningApplication user;
+        private RunningApplication secondUser;
         private String userClasspath;
         private String gatewayClasspath;
         private MySQLContainer database;
@@ -1007,7 +1011,21 @@ class AuthenticationFlowTest {
         private String redisPassword;
         private LettuceConnectionFactory redisConnectionFactory;
         private StringRedisTemplate redisTemplate;
+        private org.springframework.data.redis.core.RedisTemplate<String, Object> sessionRedisTemplate;
         private Map<String, String> userEnvironment = Map.of();
+
+        AuthenticationSystem() {
+            this(Map.of(), 1);
+        }
+
+        AuthenticationSystem(Map<String, String> extraEnvironment) {
+            this(extraEnvironment, 1);
+        }
+
+        AuthenticationSystem(Map<String, String> extraEnvironment, int userInstances) {
+            this.extraEnvironment = Map.copyOf(extraEnvironment);
+            this.userInstances = userInstances;
+        }
 
         void start() throws Exception {
             Files.createDirectories(logs);
@@ -1036,6 +1054,16 @@ class AuthenticationFlowTest {
             redisConnectionFactory = new LettuceConnectionFactory(redisConfiguration);
             redisConnectionFactory.afterPropertiesSet();
             redisTemplate = new StringRedisTemplate(redisConnectionFactory);
+            // Same key/hash-key/value serializers as Spring Session's own template, so a test can
+            // snapshot and restore a complete session hash without decoding the contract by hand.
+            sessionRedisTemplate = new org.springframework.data.redis.core.RedisTemplate<>();
+            sessionRedisTemplate.setConnectionFactory(redisConnectionFactory);
+            sessionRedisTemplate.setKeySerializer(org.springframework.data.redis.serializer.RedisSerializer.string());
+            sessionRedisTemplate.setHashKeySerializer(
+                    org.springframework.data.redis.serializer.RedisSerializer.string());
+            sessionRedisTemplate.setDefaultSerializer(
+                    new org.springframework.data.redis.serializer.JdkSerializationRedisSerializer());
+            sessionRedisTemplate.afterPropertiesSet();
             nacos = startNacos();
             publishNacosConfigs();
 
@@ -1076,6 +1104,9 @@ class AuthenticationFlowTest {
             environment.put("SERVER_TOMCAT_ACCESSLOG_ENABLED", "true");
             environment.put("SERVER_TOMCAT_ACCESSLOG_BUFFERED", "false");
             environment.put("SERVER_TOMCAT_ACCESSLOG_PATTERN", "%m %U %s %{X-Request-ID}o");
+            environment.put("BYTE_JUDGE_AUTH9_RACE_DIR", logs.resolve("race").toString());
+            environment.putAll(extraEnvironment);
+            Files.createDirectories(logs.resolve("race"));
 
             userEnvironment = Map.of(
                     "SPRING_DATASOURCE_URL", database.getJdbcUrl(),
@@ -1102,6 +1133,9 @@ class AuthenticationFlowTest {
                         webEnvironment(userEnvironment, "user", userPort, healthPort));
                 awaitHealth(user, healthPort, true);
                 awaitDiscovery(nacos, "byte-judge-user-model", userPort);
+            }
+            if (userInstances > 1) {
+                startSecondUser();
             }
             try (var port = reservePort(); var managementPort = reservePort()) {
                 gatewayPort = port.getLocalPort();
@@ -1456,6 +1490,177 @@ class AuthenticationFlowTest {
                     () -> getNoWait(browser, "/api/v1/users/me").statusCode() == 200);
         }
 
+        /**
+         * A second user process with the same artifact, classpath, database, Redis and session
+         * namespace. Only ports, Tomcat directories and the snowflake worker id differ, so a
+         * request that works on both proves the shared contract rather than local memory.
+         */
+        private void startSecondUser() throws Exception {
+            try (var port = reservePort(); var managementPort = reservePort()) {
+                secondUserPort = port.getLocalPort();
+                int healthPort = managementPort.getLocalPort();
+                port.close();
+                managementPort.close();
+                var overrides = new HashMap<>(userEnvironment);
+                // Audit/revocation identifiers are allocated per instance; a shared combination
+                // would collide on the same tables.
+                overrides.put("BYTE_JUDGE_AUDIT_WORKER_ID", "1");
+                overrides.put("BYTE_JUDGE_LOG_DIR", logs.resolve("user-b").toString());
+                overrides.put("BYTE_JUDGE_RUNTIME_DIR", logs.resolve("runtime/user-b").toString());
+                secondUser = launch("user-b", userClasspath, "com.jack.bytejudge.user.UserApplication",
+                        List.of(), webEnvironment(overrides, "user-b", secondUserPort, healthPort));
+                awaitHealth(secondUser, healthPort, true);
+                awaitDiscovery(nacos, "byte-judge-user-model", secondUserPort);
+            }
+        }
+
+        int primaryUserPort() {
+            return userPort;
+        }
+
+        int secondUserPort() {
+            return secondUserPort;
+        }
+
+        URI userUriOn(int port, String path) {
+            return URI.create("http://127.0.0.1:" + port + path);
+        }
+
+        HttpResponse<String> directGetOn(int port, Browser browser, String path,
+                                         Map<String, String> headers) throws Exception {
+            var builder = HttpRequest.newBuilder(userUriOn(port, path)).timeout(Duration.ofSeconds(10)).GET();
+            headers.forEach(builder::header);
+            return browser.perform(builder);
+        }
+
+        HttpResponse<String> directPostOn(int port, Browser browser, String path,
+                                         Map<String, String> headers, String body) throws Exception {
+            var builder = HttpRequest.newBuilder(userUriOn(port, path)).timeout(Duration.ofSeconds(15))
+                    .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
+            headers.forEach(builder::header);
+            return browser.perform(builder);
+        }
+
+        CsrfToken csrfDirectOn(int port, Browser browser) throws Exception {
+            var response = browser.perform(HttpRequest.newBuilder(userUriOn(port, "/api/v1/auth/csrf"))
+                    .timeout(Duration.ofSeconds(10)).GET());
+            var body = JSON.readTree(response.body());
+            return new CsrfToken(response, body.path("data").path("headerName").asText(),
+                    body.path("data").path("token").asText());
+        }
+
+        /** Which actually processed this response, based on its unique request id in access logs. */
+        String awaitUserInstance(String method, String path, HttpResponse<String> response) throws Exception {
+            String safePath = URI.create(path).getRawPath();
+            int status = response.statusCode();
+            String requestId = response.headers().firstValue("X-Request-ID").orElseThrow();
+            String[] instance = new String[1];
+            await("downstream user instance for " + safePath, Duration.ofSeconds(20), () -> {
+                for (String service : List.of("user", "user-b")) {
+                    if (accessLogged(logs.resolve(service + "/access"), method, safePath, status, requestId)) {
+                        instance[0] = service;
+                        return true;
+                    }
+                }
+                return false;
+            });
+            System.out.println("AUTH_HTTP_INSTANCE " + method + " " + safePath + " requestId="
+                    + requestId + " instance=" + instance[0]);
+            return instance[0];
+        }
+
+        String sessionNamespace() {
+            String namespace = environment.get("SPRING_SESSION_DATA_REDIS_NAMESPACE");
+            return namespace.endsWith(":") ? namespace : namespace + ":";
+        }
+
+        String sessionRedisKey(String sessionId) {
+            return sessionNamespace() + "sessions:" + sessionId;
+        }
+
+        /** Runtime value the running instance applied, not the value this test intended to set. */
+        int sessionMaxInactiveInterval(String sessionId) {
+            Object value = sessionRedisTemplate.opsForHash()
+                    .get(sessionRedisKey(sessionId), "maxInactiveInterval");
+            return ((Number) value).intValue();
+        }
+
+        boolean sessionHashExists(String sessionId) {
+            return Boolean.TRUE.equals(sessionRedisTemplate.hasKey(sessionRedisKey(sessionId)));
+        }
+
+        Map<Object, Object> snapshotSession(String sessionId) {
+            return sessionRedisTemplate.opsForHash().entries(sessionRedisKey(sessionId));
+        }
+
+        /** Puts back a complete session hash, as a stale node or an interrupted delete could. */
+        void restoreSession(String sessionId, Map<Object, Object> fields) {
+            String key = sessionRedisKey(sessionId);
+            sessionRedisTemplate.opsForHash().putAll(key, fields);
+            sessionRedisTemplate.expire(key, Duration.ofMinutes(35));
+        }
+
+        /**
+         * Replaces a session hash with the attribute-only fragment a stale request's delta save
+         * leaves behind after the original hash was deleted: no creation, last-access or interval
+         * fields, and no tombstone, exactly like an expiry race.
+         */
+        void replaceSessionWithFragment(String sessionId, String attributeName) {
+            String key = sessionRedisKey(sessionId);
+            sessionRedisTemplate.delete(key);
+            sessionRedisTemplate.opsForHash().put(key, "sessionAttr:" + attributeName, "fragment");
+            sessionRedisTemplate.expire(key, Duration.ofMinutes(35));
+        }
+
+        long revokedSessionCount(String sessionId) throws Exception {
+            try (var connection = connect();
+                 var statement = connection.prepareStatement(
+                         "SELECT COUNT(*) FROM revoked_session WHERE sessionIdHash = ?")) {
+                statement.setBytes(1, sha256(sessionId));
+                try (var rows = statement.executeQuery()) {
+                    assertThat(rows.next()).isTrue();
+                    return rows.getLong(1);
+                }
+            }
+        }
+
+        int revokedSessionHashLength(String sessionId) throws Exception {
+            try (var connection = connect();
+                 var statement = connection.prepareStatement(
+                         "SELECT LENGTH(sessionIdHash) FROM revoked_session WHERE sessionIdHash = ?")) {
+                statement.setBytes(1, sha256(sessionId));
+                try (var rows = statement.executeQuery()) {
+                    assertThat(rows.next()).isTrue();
+                    return rows.getInt(1);
+                }
+            }
+        }
+
+        private static byte[] sha256(String value) throws Exception {
+            return java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8));
+        }
+
+        Path raceDirectory() {
+            return logs.resolve("race");
+        }
+
+        /** Waits until a coordinated request has loaded its session and is holding the response. */
+        void awaitRaceLoaded(String token) throws Exception {
+            Path loaded = raceDirectory().resolve(token + ".loaded");
+            await("coordinated request " + token + " to load its session", Duration.ofSeconds(30),
+                    () -> Files.isRegularFile(loaded)
+                            && !Files.readString(loaded, StandardCharsets.UTF_8).isBlank());
+        }
+
+        String raceLoadedSessionId(String token) throws Exception {
+            return Files.readString(raceDirectory().resolve(token + ".loaded"), StandardCharsets.UTF_8).strip();
+        }
+
+        void releaseRace(String token) throws Exception {
+            Files.writeString(raceDirectory().resolve(token + ".release"), "release", StandardCharsets.UTF_8);
+        }
+
         Browser newBrowser() {
             return new Browser();
         }
@@ -1569,11 +1774,7 @@ class AuthenticationFlowTest {
         }
 
         CsrfToken csrfDirect(Browser browser) throws Exception {
-            var response = browser.perform(HttpRequest.newBuilder(userUri("/api/v1/auth/csrf"))
-                    .timeout(Duration.ofSeconds(10)).GET());
-            var body = JSON.readTree(response.body());
-            return new CsrfToken(response, body.path("data").path("headerName").asText(),
-                    body.path("data").path("token").asText());
+            return csrfDirectOn(userPort, browser);
         }
 
         /** Login through the gateway without waiting for the downstream access log (fast retries). */
@@ -1724,17 +1925,12 @@ class AuthenticationFlowTest {
         /** Direct user-service call, bypassing the gateway on purpose. */
         HttpResponse<String> directGet(Browser browser, String path, Map<String, String> headers)
                 throws Exception {
-            var builder = HttpRequest.newBuilder(userUri(path)).timeout(Duration.ofSeconds(10)).GET();
-            headers.forEach(builder::header);
-            return browser.perform(builder);
+            return directGetOn(userPort, browser, path, headers);
         }
 
         HttpResponse<String> directPost(Browser browser, String path, Map<String, String> headers,
                                         String body) throws Exception {
-            var builder = HttpRequest.newBuilder(userUri(path)).timeout(Duration.ofSeconds(10))
-                    .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
-            headers.forEach(builder::header);
-            return browser.perform(builder);
+            return directPostOn(userPort, browser, path, headers, body);
         }
 
         HttpResponse<String> internalVerify(String sessionId, String caller, String credential)
@@ -1792,6 +1988,29 @@ class AuthenticationFlowTest {
                  var statement = connection.prepareStatement(
                          "UPDATE user_account SET auth_epoch = auth_epoch + 1 WHERE account = ?")) {
                 statement.setString(1, account);
+                assertThat(statement.executeUpdate()).isEqualTo(1);
+            }
+        }
+
+        long authEpoch(String account) throws Exception {
+            try (var connection = connect();
+                 var statement = connection.prepareStatement(
+                         "SELECT auth_epoch FROM user_account WHERE account = ?")) {
+                statement.setString(1, account);
+                try (var rows = statement.executeQuery()) {
+                    assertThat(rows.next()).isTrue();
+                    return rows.getLong(1);
+                }
+            }
+        }
+
+        /** Restores an earlier authentication version, as a rolled-back fixture change would. */
+        void setAuthEpoch(String account, long epoch) throws Exception {
+            try (var connection = connect();
+                 var statement = connection.prepareStatement(
+                         "UPDATE user_account SET auth_epoch = ? WHERE account = ?")) {
+                statement.setLong(1, epoch);
+                statement.setString(2, account);
                 assertThat(statement.executeUpdate()).isEqualTo(1);
             }
         }
@@ -1897,25 +2116,34 @@ class AuthenticationFlowTest {
             String safePath = URI.create(path).getRawPath();
             int status = response.statusCode();
             String requestId = response.headers().firstValue("X-Request-ID").orElseThrow();
-            Path directory = logs.resolve("user/access");
             await("downstream user access for " + safePath, Duration.ofSeconds(20), () -> {
-                if (!Files.isDirectory(directory)) {
-                    return false;
-                }
-                try (var files = Files.list(directory)) {
-                    for (var file : files.filter(Files::isRegularFile).toList()) {
-                        for (var line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
-                            // Correlate this exact response without logging query values or cookies.
-                            if (line.equals(method + " " + safePath + " " + status + " " + requestId)) {
-                                System.out.println("AUTH_HTTP_DOWNSTREAM " + method + " " + safePath + " "
-                                        + status + " requestId=" + requestId);
-                                return true;
-                            }
-                        }
+                for (String service : List.of("user", "user-b")) {
+                    if (accessLogged(logs.resolve(service + "/access"), method, safePath, status, requestId)) {
+                        System.out.println("AUTH_HTTP_DOWNSTREAM " + method + " " + safePath + " "
+                                + status + " requestId=" + requestId + " instance=" + service);
+                        return true;
                     }
                 }
                 return false;
             });
+        }
+
+        private static boolean accessLogged(Path directory, String method, String safePath, int status,
+                                            String requestId) throws IOException {
+            if (!Files.isDirectory(directory)) {
+                return false;
+            }
+            try (var files = Files.list(directory)) {
+                for (var file : files.filter(Files::isRegularFile).toList()) {
+                    for (var line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
+                        // Correlate this exact response without logging query values or cookies.
+                        if (line.equals(method + " " + safePath + " " + status + " " + requestId)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
         }
 
         private HttpResponse<String> get(URI uri) throws IOException, InterruptedException {

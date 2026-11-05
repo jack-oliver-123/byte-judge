@@ -119,7 +119,7 @@ docker compose --env-file .env.local up -d --wait
 
 随后以含 #10 时序修复的最新 tip（`f9e5c84`）为基底合并 #8 与 #11，并重跑完整 `mvnw.cmd -B clean package`：11 个 reactor 项全部 SUCCESS，105 项测试全部通过（0 failure、0 error、0 skipped，9 分 19 秒），其中网关 10 项、用户服务 95 项（管理员初始化 35、认证 HTTP 32、认证应用服务 6、Nacos 运行时 5、限频 12、来源解析 5）。输出位于 `log/build/merge-auth8-combined-package.log`。合并保留 30 秒测试限制块、TTL 加速到期用例、30 秒 Nacos 管理 API 超时，以及 #11 的 Nacos 运行时与日志关联验收。
 
-未验证边界：会话并发撤销竞争（#9）、CORS、故障超时与恢复的完整矩阵（后续故障切片）、多实例雪花标识唯一性部署演练、PowerShell 烟测脚本本身的执行。
+未验证边界：CORS、故障超时与恢复的完整矩阵（后续故障切片）、多实例雪花标识唯一性部署演练、PowerShell 烟测脚本本身的执行。会话并发撤销竞争由 #9 记录。
 
 2026-11-05，任务 #11：使用 Nacos 外置配置运行认证流程并关联日志。依赖采用 `spring.config.import`（非 bootstrap），环境、Data ID、Group 组织与非敏感模板、导入步骤、日志关联示例、故障/恢复对照与限制见 [Nacos 配置与运行材料](infra/nacos/README.md)。网关与用户服务通过 `spring.config.import` 导入必需的 `byte-judge-common.yml` 与各自服务文档，并显式 `refreshEnabled=false`，不承诺全量动态刷新；Data ID 不带环境占位符。`import-nacos-config.ps1` 只发布三个命名模板，回环校验、强制 `NACOS_AUTH_IDENTITY_KEY/VALUE`、UTF-8 读回与重试，错误信息与输出不含凭据。WebProtocolConfiguration 对导入契约做 fail-closed 校验，缺失 Data ID（客户端可能返回空源）时启动失败，不使用不安全默认值。
 
@@ -137,3 +137,15 @@ Java 21.0.11、Maven Wrapper 3.9.15 下执行 `mvnw clean package -B`，10 个 r
 | redis:7.4.12 | b6b6e3dc0c0952737748e55d5d885272840c7e42ba41ab1d5489f693419882f5 |
 | rabbitmq:4.1.8-management | bf215c927c885b6d28bc52e02b0f2e1c033f2b439ec946c643834be93312ec4d |
 | nacos/nacos-server:v3.3.0 | bf18e41d09efd4e72edc46b010d42dca49f776421413cb2637be1fff0d6ef90f |
+
+2026-11-05，任务 #9：保证跨实例会话、闲置过期与撤销正确。新增用户库迁移 `V3__create_revoked_session.sql`（雪花主键、`sessionIdHash BINARY(32)` 唯一、UTC `revokedAt`，不保存原始 Cookie），并通过 `SessionRevocation` Port 和 MyBatis 适配器提供幂等撤销判定。退出先持久提交撤销事实，再清理 CSRF、Redis Session 和 Cookie；写入失败返回 503 而不是假成功。网关内部身份接口在读取 Redis 前检查撤销；用户直连的实时核验也按 Session ID 检查，并在账户/角色/状态/`authEpoch` 不匹配时先持久撤销再拒绝，因此恢复账户状态不能复活旧会话。共享 Session 适配器把撤销后由旧请求写出的、缺少必需字段的残片当作无效会话（401），避免 500；该适配器不吞 Redis 连接故障。
+
+保留策略：撤销记录永久保留，不设 TTL 或自动清理。30 分钟闲置时限只约束不活动时长，不能证明撤销前已加载会话的在途请求到何时不会再保存；后续回收必须先证明最大请求生命周期或绝对会话寿命。热路径每受保护请求增加一次按唯一摘要的数据库查询，本切片未做吞吐压测。
+
+自动验收使用 Java 21.0.11、Maven Wrapper 3.9.15，真实网关、两个共享同一制品/MySQL/Redis/Nacos 的用户服务进程（独立端口、日志目录和雪花 worker），MySQL 8.4.13、Redis 7.4.12、Nacos v3.3.0 均为临时容器。`CrossInstanceSessionTest` 9 项通过（89.9 秒）：同一 Cookie 的业务请求经 access log 请求标识分别命中两个实例且身份一致；运行实例实际应用 1800 秒默认闲置；退出只撤销当前会话并在两实例直连及网关均拒绝旧 Cookie；撤销记录为 32 字节摘要；协调“读取→退出完成→旧请求保存”后旧 Cookie 仍拒绝；把完整旧 Session 哈希写回 Redis 后仍拒绝；只含属性字段的残片哈希被当作未认证（401）而不是 500；禁用账户与递增 `authEpoch` 后下一次请求拒绝、恢复状态或回退认证版本均不复活、重新登录有效；实例重启后撤销仍有效。`SessionContractTest` 2 项通过（180.3 秒）：30 秒测试超时下闲置过期与活动续期边界，网关和直连一致，并断言运行实例使用该测试值。回归 `AuthenticationFlowTest` 32 项、`NacosRuntimeFlowTest` 5 项均通过。另做了保护移除反证：将 `isRevoked` 临时改为恒 false 后，完整旧 Session 用例以 200 而非 401 失败，确认该断言依赖持久撤销判定；随后恢复实现。
+
+跨实例分流需注意：网关的入口身份核验会额外消费一次负载均衡选择，因此在恰好两个实例时，连续受保护请求的业务代理可能固定落在同一奇偶实例。测试在两次业务请求间交替一个公开请求以观察两个实例；这不是粘性路由，两个进程始终存活且共享会话。手工复现、撤销/保留语义和接口影响见 [认证接口](docs/auth-api.md#会话撤销闲置与跨实例)。
+
+随后在同一工作树以 Java 21.0.11 执行 `mvnw.cmd -B clean package`：11 个 reactor 项全部 SUCCESS，116 项测试全部通过（0 failure、0 error、0 skipped，16 分 09 秒），其中网关 10 项、用户服务 106 项；全量运行中 `CrossInstanceSessionTest` 9 项 143.4 秒、`SessionContractTest` 2 项 184.0 秒，`AuthenticationFlowTest` 32 项、`NacosRuntimeFlowTest` 5 项继续通过。输出位于 `log/build/auth9-full-package-review.log`。未重启本地六服务或重新执行全底座 `smoke-test.ps1`（注册、端口和路由未变）。
+
+限制：未真实等待 30 分钟，而是从运行实例会话哈希断言 1800 秒并用独立短超时验证边界；Redis 索引哈希本身有额外 5 分钟影子过期，不能以键 TTL 代替认证过期判断；未验证撤销记录长期增长后的归档/清理（明确不在本切片自动删除）；未做认证吞吐压测；未执行全底座 `smoke-test.ps1`（注册、端口和路由未变）。
