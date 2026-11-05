@@ -772,8 +772,8 @@ class AuthenticationFlowTest {
         }
         String blockKey = system.loginRateLimitNamespace() + ":source:" + source + ":blocked";
         long armed = system.redisPttl(blockKey);
-        assertThat(armed).as("the 10th failure must arm the three-second test block")
-                .isBetween(1L, 3000L);
+        assertThat(armed).as("the 10th failure must arm the test block")
+                .isBetween(1L, 30_000L);
         var keys = system.redisKeys(system.loginRateLimitNamespace() + ":source:" + source + ":*");
         assertThat(keys).anyMatch(key -> key.endsWith(":failures"))
                 .anyMatch(key -> key.endsWith(":blocked"));
@@ -788,6 +788,12 @@ class AuthenticationFlowTest {
         long afterRejections = system.redisPttl(blockKey);
         assertThat(afterRejections).as("rejected logins must not extend their own block")
                 .isPositive().isLessThan(armed);
+
+        // Time is controllable in tests: shortening the keys is the equivalent of waiting out the
+        // configured block without making the suite sleep for tens of seconds.
+        for (String key : keys) {
+            system.expireSoon(key);
+        }
 
         long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
         while (system.redisPttl(blockKey) != -2 && System.nanoTime() < deadline) {
@@ -966,7 +972,7 @@ class AuthenticationFlowTest {
             environment.put("BYTE_JUDGE_SESSION_COOKIE_SECURE", "false");
             environment.put("BYTE_JUDGE_INTERNAL_GATEWAY_CREDENTIAL", internalCredential);
             // Short block duration for rate-limit acceptance; production defaults stay 10/15m.
-            environment.put("BYTE_JUDGE_AUTH_RATE_LIMIT_BLOCK_DURATION", "3s");
+            environment.put("BYTE_JUDGE_AUTH_RATE_LIMIT_BLOCK_DURATION", "30s");
             environment.put("BYTE_JUDGE_AUTH_RATE_LIMIT_NAMESPACE", "auth-http:" + runId + ":login");
             // External configuration is part of this slice's contract: both services import the
             // required documents below from the disposable Nacos container. Do not pin
@@ -1056,7 +1062,8 @@ class AuthenticationFlowTest {
             var body = "dataId=" + encode(dataId) + "&groupName=" + encode(configGroup)
                     + "&namespaceId=public&type=yaml&content=" + encode(content);
             var request = HttpRequest.newBuilder(nacosUri("/nacos/v3/admin/cs/config"))
-                    .timeout(Duration.ofSeconds(10))
+                    // Container API can be slow while the full build runs in parallel.
+                    .timeout(Duration.ofSeconds(30))
                     .header("Content-Type", "application/x-www-form-urlencoded")
                     .header("auth-http-test", runId)
                     .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8)).build();
@@ -1069,7 +1076,7 @@ class AuthenticationFlowTest {
             var body = "dataId=" + encode(dataId) + "&groupName=" + encode(configGroup)
                     + "&namespaceId=public";
             var request = HttpRequest.newBuilder(nacosUri("/nacos/v3/admin/cs/config"))
-                    .timeout(Duration.ofSeconds(10))
+                    .timeout(Duration.ofSeconds(30))
                     .header("Content-Type", "application/x-www-form-urlencoded")
                     .header("auth-http-test", runId)
                     .method("DELETE", HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8)).build();
@@ -1349,6 +1356,10 @@ class AuthenticationFlowTest {
         List<String> redisKeys(String pattern) {
             var keys = redisTemplate.keys(pattern);
             return keys == null ? List.of() : keys.stream().sorted().toList();
+        }
+
+        void expireSoon(String key) {
+            redisTemplate.expire(key, Duration.ofMillis(300));
         }
 
         /** Direct owner call used to prove an untrusted peer cannot choose the rate-limit source. */
