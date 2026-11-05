@@ -436,6 +436,7 @@ class AdminInitializationTest {
         environment.put("BYTE_JUDGE_WEB_INGRESS", "false");
         environment.put("BYTE_JUDGE_AUDIT_WORKER_ID", "0");
         environment.put("BYTE_JUDGE_AUDIT_DATACENTER_ID", "0");
+        environment.put("BYTE_JUDGE_CONFIG_CONTRACT", "auth-infra-v1");
         environment.put("SPRING_DATASOURCE_URL", DATABASE.getJdbcUrl());
         environment.put("SPRING_DATASOURCE_USERNAME", DATABASE.getUsername());
         environment.put("SPRING_DATASOURCE_PASSWORD", DATABASE.getPassword());

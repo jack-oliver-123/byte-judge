@@ -7,6 +7,10 @@
 # Do not add credentials, tokens, private endpoints or environment-specific connection
 # strings here. Those stay in the controlled environment/file. `refreshEnabled=false` is
 # used at the import site: this slice does not promise live refresh of every value.
+byte-judge:
+  config:
+    # Required because this client version may return an empty source for a missing Data ID.
+    contract: auth-infra-v1
 logging:
   level:
     root: INFO
