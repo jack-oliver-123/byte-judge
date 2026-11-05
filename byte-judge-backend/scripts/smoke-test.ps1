@@ -16,7 +16,15 @@ try {
         }
         if (!$ready) { throw "$name health check failed." }
         $service = if ($name -eq 'gateway') { 'byte-judge-gateway' } else { "byte-judge-$name-model" }
-        $instances = Invoke-RestMethod "http://$env:NACOS_SERVER_ADDR/nacos/v3/client/ns/instance/list?serviceName=$service&groupName=BYTE_JUDGE" -TimeoutSec 10
+        $group = 'BYTE_JUDGE'
+        $namespace = 'public'
+        if ($name -in @('gateway', 'user')) {
+            if ($env:NACOS_DISCOVERY_GROUP) { $group = $env:NACOS_DISCOVERY_GROUP }
+            if ($env:NACOS_DISCOVERY_NAMESPACE) { $namespace = $env:NACOS_DISCOVERY_NAMESPACE }
+        }
+        $discoveryQuery = 'serviceName=' + [Uri]::EscapeDataString($service) + '&groupName=' +
+            [Uri]::EscapeDataString($group) + '&namespaceId=' + [Uri]::EscapeDataString($namespace)
+        $instances = Invoke-RestMethod "http://$env:NACOS_SERVER_ADDR/nacos/v3/client/ns/instance/list?$discoveryQuery" -TimeoutSec 10
         if ($instances.code -ne 0 -or !($instances.data | Where-Object { $_.healthy -and $_.port -eq (8080 + $index) })) { throw "$service is not registered healthy." }
         Write-Host "PASS health + discovery: $service"
     }
@@ -60,7 +68,9 @@ try {
             @('gateway', 'request correlation configured ingress=true'),
             @('user', 'request correlation configured ingress=false'),
             @('gateway', '[service=gateway]'),
-            @('user', '[service=user]'))) {
+            @('user', '[service=user]'),
+            @('gateway', 'configContract=auth-infra-v1'),
+            @('user', 'configContract=auth-infra-v1'))) {
         $applicationLog = Join-Path $env:BYTE_JUDGE_LOG_DIR "$($check[0])/application.log"
         $deadline = (Get-Date).AddSeconds(30)
         do {
@@ -79,7 +89,10 @@ try {
         $applicationLog = Join-Path $env:BYTE_JUDGE_LOG_DIR "$service/application.log"
         $deadline = (Get-Date).AddSeconds(20)
         do {
-            $evidence = if (Test-Path $applicationLog) { Select-String -Path $applicationLog -SimpleMatch "requestId=$requestId" } else { @() }
+            $evidence = if (Test-Path $applicationLog) {
+                @(Select-String -Path $applicationLog -SimpleMatch "http requestId=$requestId" |
+                    Where-Object { $_.Line.Contains("[service=$service]") -and $_.Line.Contains("[requestId=$requestId]") })
+            } else { @() }
             if ($evidence.Count -eq 0) { Start-Sleep -Seconds 1 }
         } while ($evidence.Count -eq 0 -and (Get-Date) -lt $deadline)
         if ($evidence.Count -eq 0) { throw "Missing request correlation evidence in $applicationLog for $requestId" }

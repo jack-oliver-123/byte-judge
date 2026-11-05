@@ -46,9 +46,10 @@ public final class RequestLogFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        String supplied = request.getHeader(HEADER);
-        String id = !ingress && supplied != null && ACCEPTED_ID.matcher(supplied).matches()
-                ? supplied : UUID.randomUUID().toString();
+        var suppliedHeaders = request.getHeaders(HEADER);
+        String supplied = suppliedHeaders.hasMoreElements() ? suppliedHeaders.nextElement() : null;
+        String id = !ingress && supplied != null && !suppliedHeaders.hasMoreElements()
+                && ACCEPTED_ID.matcher(supplied).matches() ? supplied : UUID.randomUUID().toString();
         request.setAttribute(REQUEST_ID, id);
         response.setHeader(HEADER, id);
         response.setHeader("Cache-Control", "no-store");
@@ -74,18 +75,22 @@ public final class RequestLogFilter extends OncePerRequestFilter {
                 return Collections.enumeration(names);
             }
         };
+        boolean completed = false;
         try {
             chain.doFilter(forwarded, response);
+            completed = true;
         } finally {
-            // Fixed fields only: the URI has no query string, and headers, bodies, cookies, query
-            // values and parser exception messages are never logged. The path is safe here because
-            // no API route carries a secret in its path; keep it that way when adding routes.
-            int status = response.getStatus();
-            HTTP_LOG.atLevel(status >= 500 ? Level.WARN : Level.INFO)
-                    .log("http requestId={} method={} path={} status={} durationMs={}",
-                            id, request.getMethod(), request.getRequestURI(), status,
-                            (System.nanoTime() - start) / 1_000_000);
-            MDC.remove(MDC_KEY);
+            try {
+                // Fixed fields only: no query, headers, body, cookies or exception text. API paths
+                // must not carry secrets. An escaping exception may precede the container's 500.
+                int status = completed ? response.getStatus() : 500;
+                HTTP_LOG.atLevel(status >= 500 ? Level.WARN : Level.INFO)
+                        .log("http requestId={} method={} path={} status={} durationMs={}",
+                                id, request.getMethod(), request.getRequestURI(), status,
+                                (System.nanoTime() - start) / 1_000_000);
+            } finally {
+                MDC.remove(MDC_KEY);
+            }
         }
     }
 }

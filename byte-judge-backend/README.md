@@ -10,6 +10,8 @@ Java 21 / Maven 3.9.15；Spring Boot 4.0.9、Cloud 2025.1.4、Alibaba 2025.1.0.0
 . ./scripts/use-java21.ps1
 ./mvnw.cmd clean package
 ./scripts/start-infra.ps1
+. ./scripts/local-env.ps1
+./scripts/import-nacos-config.ps1
 ./scripts/start-services.ps1
 ./scripts/smoke-test.ps1
 ```
@@ -33,7 +35,7 @@ start-services.ps1 将变量注入六个子进程，使用 -Xmx256m；应用日�
 
 本地所有 Java 和管理端口绑定 127.0.0.1。管理端口只暴露 health，无需鉴权且不显示细节；此为隔离本机开发约定。当前只交付认证与最小管理员权限，其他业务鉴权、生产部署和前端尚未实现，不能直接用于公开部署。judge 当前没有消费者或执行器，保持不接任务。
 
-基础设施：MySQL 3306、Redis 16379（避开本机已有 6379，可通过 REDIS_PORT 覆盖）、RabbitMQ 5672 / 管理 15672；Nacos API 8848、gRPC 9848、控制台 [本地控制台](http://127.0.0.1:8088/)。全部仅绑定回环。四个数据库 bj_user/problem/submission/contest 对应同名账号，口令分别独立；网关与 judge 无业务库账号。Nacos 使用 standalone + Derby，本地关闭鉴权。本轮启用注册发现，配置中心延后；后续通过 spring.config.import 接入。
+基础设施：MySQL 3306、Redis 16379（避开本机已有 6379，可通过 REDIS_PORT 覆盖）、RabbitMQ 5672 / 管理 15672；Nacos API 8848、gRPC 9848、控制台 [本地控制台](http://127.0.0.1:8088/)。全部仅绑定回环。四个数据库 bj_user/problem/submission/contest 对应同名账号，口令分别独立；网关与 judge 无业务库账号。Nacos 使用 standalone + Derby，本地关闭鉴权。六服务使用注册发现；网关和用户服务另通过 `spring.config.import` 导入必需的 Nacos Config，启动前按上面的独立步骤导入模板。环境、Data ID、Group、日志与故障恢复说明见 [Nacos 配置与运行材料](infra/nacos/README.md)。
 
 ## 验证口径
 
@@ -45,9 +47,9 @@ smoke-test.ps1 失败抛错并返回非零。验证六服务 UP 和 Nacos 健康
 
 | 模块 | 主要依赖 |
 | --- | --- |
-| gateway | Gateway MVC、Actuator、Nacos Discovery、LoadBalancer、Caffeine |
+| gateway | Gateway MVC、Actuator、Nacos Discovery + Config、LoadBalancer、Caffeine |
 | user / problem / submission / contest | MVC、Validation、RestClient、Actuator、Nacos Discovery、LoadBalancer、Caffeine、MyBatis-Plus Boot4、MySQL、Flyway、Redis、AMQP |
-| user 额外 | Spring Security Crypto + Bouncy Castle，实现 Argon2id 管理员密码摘要；Testcontainers MySQL 为 test scope |
+| user 额外 | Spring Security Crypto + Bouncy Castle，实现 Argon2id 管理员密码摘要；Nacos Config；Testcontainers MySQL/Redis/Nacos 为 test scope |
 | judge | MVC、Validation、RestClient、Actuator、Nacos Discovery、LoadBalancer、Caffeine、AMQP；无 MySQL / Redis / Session 依赖 |
 | 六个启动模块测试 | Spring Boot Test、MVC Test，均为 test scope |
 
@@ -65,9 +67,9 @@ MyBatis-Plus 固定 3.5.18，在根 POM 通过 mybatis-plus.version 和 BOM 管�
 
 接口协议、错误码、Cookie/CSRF 生命周期、管理员入口和手工调用步骤见 [登录、当前身份、退出与管理员权限接口](docs/auth-api.md)。网关与用户服务共享 Redis Session（indexed repository，命名空间 `byte-judge:session`，30 分钟闲置）；BJSESSION Cookie 在 local 显式关闭 Secure，其他环境默认 Secure。用户服务负责 CSRF 校验和登录/退出写入；网关仅转发 Cookie、CSRF 头和下游 Set-Cookie，既不读取也不写入会话（关闭 request-handled 事件并使用无操作 FlashMapManager），避免在用户服务轮换或撤销会话后回写残片。网关在转发前剥离客户端传入的 `X-User-*`、`X-Internal-*` 与 `Forwarded` / `X-Forwarded-*` 头，下游服务不会收到可伪造的身份头。`GET /api/v1/admin/users/me` 提供最小管理员身份入口；每个受保护请求都由用户服务按权威角色、账户状态和 `authEpoch` 实时核验，网关入口另经独立服务身份调用内部身份接口，浏览器管理员 Session 不能授权该内部接口。
 
-认证请求日志由 common-web 的基础过滤器生成请求标识（非入口只接受合法格式的下游标识），写入响应头与 MDC，日志仅含方法、状态和耗时，不含查询、请求体、Cookie 或凭据。MVC 与 Security 错误出口都输出统一 `code/data/message/requestId/serverTime` 结构并保留真实 HTTP 状态。
+认证请求日志由 common-web 的基础过滤器生成请求标识（非入口只接受合法格式的下游标识），写入响应头与 MDC，HTTP 完成日志包含请求 ID、方法、路径、状态和耗时，不含查询、请求体、Cookie 或凭据；入口总是重建 ID，下游仅接受一个长度 1～64 的字母/数字/下划线/短横线 ID。MVC 与 Security 错误出口都输出统一 `code/data/message/requestId/serverTime` 结构并保留真实 HTTP 状态。
 
-Spring Security Web 与 Spring Session 的适配集中在 `common-web`，由网关和用户服务显式 `@Import`；Sentinel 与 Nacos Config 仍在对应规则与配置装配阶段接入。starter 存在不能代表 Outbox、消息消费或迁移已实现。P-01 完整验证、其他原型与 AT 验收仍按架构文档执行，双 submission / judge 演练随后进行。
+Spring Security Web 与 Spring Session 的适配集中在 `common-web`，由网关和用户服务显式 `@Import`；Nacos Config 已为认证链路装配，Sentinel 仍待对应规则切片接入。starter 存在不能代表 Outbox、消息消费或迁移已实现。P-01 完整验证、其他原型与 AT 验收仍按架构文档执行，双 submission / judge 演练随后进行。
 
 ## 停止与恢复
 
@@ -102,6 +104,14 @@ docker compose --env-file .env.local up -d --wait
 同次在独立 worktree `feat/login-rate-limit` 使用 Java 21.0.11、Maven Wrapper 3.9.15：7 项新增真实 HTTP 验收全部通过（0 failure、0 error、0 skipped，2 分 56 秒），覆盖来源跨账户、账户跨实际来源及大小写/空白归一化、20 个并发失败恰好 10 个 401 与 10 个 429、伪造转发/内部来源头、成功不清零、短限制到期恢复且重复 429 不延长，以及非可信来源直连用户服务。网关与用户服务为独立 JVM，MySQL/Redis/Nacos 为独立临时容器；仅限制时长覆盖为 3 秒，阈值/窗口仍为 10/15m。另有 23 项聚焦测试全部通过（21 项用户服务、2 项网关，33 秒），包括真实 Redis 原子计数/TTL/并发、来源解析、生产默认值及 Redis 故障时认证失败关闭。固定窗口测试另以临时滑动窗口变体验证会按预期失败（剩余 4997ms 未小于原窗口 4891ms），确认用例能区分两种语义；生产实现已恢复并通过。
 
 随后在同一 worktree 执行 `mvnw clean package -B`：Java 21.0.11 下 11 个 reactor 项全部 SUCCESS，95 项测试全部通过（0 failure、0 error、0 skipped），总耗时 8 分 16 秒，其中网关 9 项、用户服务 86 项。该次构建同时包含管理员命令独立配置根修复（`--spring.config.name=admin-command`、`--spring.cloud.nacos.config.enabled=false`、`admin-command.yml` / `admin-command-local.yml`），使 admin-command 回归通过。输出保存在 `log/build/issue10-full-package.log`，HTTP、聚焦及窗口反证分别位于 `log/build/issue10-http.log`、`issue10-focused.log`、`issue10-sliding-window-negative.log`。未重启已有六服务或执行全底座 smoke，#10 未改变注册、端口或路由；Redis 故障的完整 HTTP 响应仍由最终集成切片验收。
+
+2026-11-05，任务 #11：使用 Nacos 外置配置运行认证流程并关联日志。依赖采用 `spring.config.import`（非 bootstrap），环境、Data ID、Group 组织与非敏感模板、导入步骤、日志关联示例、故障/恢复对照与限制见 [Nacos 配置与运行材料](infra/nacos/README.md)。网关与用户服务通过 `spring.config.import` 导入必需的 `byte-judge-common.yml` 与各自服务文档，并显式 `refreshEnabled=false`，不承诺全量动态刷新；Data ID 不带环境占位符。`import-nacos-config.ps1` 只发布三个命名模板，回环校验、强制 `NACOS_AUTH_IDENTITY_KEY/VALUE`、UTF-8 读回与重试，错误信息与输出不含凭据。WebProtocolConfiguration 对导入契约做 fail-closed 校验，缺失 Data ID（客户端可能返回空源）时启动失败，不使用不安全默认值。
+
+真实 HTTP 链路验收使用独立 MySQL 8.4.13、Redis 7.4.12 与 Nacos v3.3.0 容器，网关与用户服务为独立 JVM：running 认证（CSRF/登录/当前身份）在 Nacos 中断（pause）后继续工作，合法本地快照可完成配置只读启动，但启用发现时 Nacos 中断则非零退出；恢复后两服务重新注册；停掉唯一用户实例返回 5xx（无硬编码降级），重启后恢复 200；删除/重新发布服务文档可再次冷启动。请求标识 MDC 并发隔离与请求结束清理用并发真实 HTTP 验证（8 并发，两服务，生命周期监听器），每请求各日志恰一行 `[requestId=<id>]`、结束仪式为 `[requestId=none]` 与 `remainingMdc=empty`。日志脱敏扫描覆盖密码、Argon2 摘要标记、Cookie、CSRF、内部网关凭据、数据库/Redis 口令与敏感查询值；审计仍归用户服务自有，未搭建审计查询或追踪平台。
+
+Java 21.0.11、Maven Wrapper 3.9.15 下执行 `mvnw clean package -B`，10 个 reactor 项全部 SUCCESS，101 项测试全部通过（0 failure、0 error、0 skipped），总耗时 13 分 19 秒，其中网关 9 项、用户服务 92 项（管理员 35、认证 HTTP 29、Nacos 运行时 5、限频聚焦 12、认证器 6、来源解析 5）。输出保存在 `log/build/nacos-issue11-final-package.log`。管理员命令独立配置根（`admin-command.yml`、`--spring.cloud.nacos.config.enabled=false`）不连接 Nacos/Redis，其“普通 Web 启动”回归测试以 `SPRING_CONFIG_LOCATION=classpath:byte-judge-session.yml` + `SPRING_CLOUD_NACOS_CONFIG_ENABLED=false` 独立于配置中心验证。
+
+未验证/未实现项：Nacos 冷重启（pause 变更来自运行容器）、集群/TLS/RBAC/动态刷新；`smoke-test.ps1` 本次未执行（注册、端口、路由未变，需在例行全底座验收时复跑）。仓库 `.idea/ApifoxUploaderProjectSetting.xml`（基线上已提交）含 Apifox 访问令牌，需从版本库移除并轮换，不在本任务擅改。
 
 实测镜像摘要（标签对应的下载制品，生产发布前需重新审查并冻结）：
 
