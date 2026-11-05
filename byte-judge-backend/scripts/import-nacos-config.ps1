@@ -9,19 +9,26 @@ if (!$ServerAddr) { $ServerAddr = '127.0.0.1:8848' }
 if (!$Group) { $Group = 'BYTE_JUDGE' }
 if (!$NamespaceId) { $NamespaceId = 'public' }
 
-# Local and controlled environments authenticate this administrative write with the Nacos
-# server identity, which is supplied by the environment and never written into shared config.
-$headers = @{}
-if ($env:NACOS_AUTH_IDENTITY_KEY -and $env:NACOS_AUTH_IDENTITY_VALUE) {
-    $headers[$env:NACOS_AUTH_IDENTITY_KEY] = $env:NACOS_AUTH_IDENTITY_VALUE
+# This helper is for the repository's isolated, loopback-only Compose deployment. Server
+# identity is highly privileged: remote deployments must use their own TLS/RBAC management
+# path, rather than send this identity to an arbitrary address.
+$address = if ($ServerAddr -match '^https?://') { $ServerAddr } else { "http://$ServerAddr" }
+$server = [Uri]$address
+if (!$server.IsLoopback -or $server.UserInfo -or $server.AbsolutePath -ne '/' -or $server.Query -or $server.Fragment) {
+    throw 'The local import helper requires a loopback Nacos address without credentials, path or query.'
 }
+if (!$env:NACOS_AUTH_IDENTITY_KEY -or !$env:NACOS_AUTH_IDENTITY_VALUE) {
+    throw 'Load the controlled local Nacos administrative identity before importing configuration.'
+}
+$headers = @{}
+$headers[$env:NACOS_AUTH_IDENTITY_KEY] = $env:NACOS_AUTH_IDENTITY_VALUE
+$base = $server.GetLeftPart([UriPartial]::Authority)
 
-$files = @(Get-ChildItem $ConfigDir -Filter '*.yml' | Sort-Object Name)
-if ($files.Count -eq 0) { throw "No Nacos config templates found in $ConfigDir" }
-
-foreach ($file in $files) {
-    $dataId = $file.Name
-    $content = [IO.File]::ReadAllText($file.FullName, [Text.Encoding]::UTF8)
+# Publish only the three reviewed templates, not arbitrary YAML files in this directory.
+foreach ($dataId in @('byte-judge-common.yml', 'byte-judge-gateway.yml', 'byte-judge-user-model.yml')) {
+    $file = Join-Path $ConfigDir $dataId
+    if (!(Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing Nacos template: $dataId" }
+    $content = [IO.File]::ReadAllText($file, [Text.Encoding]::UTF8)
     $body = @{
         dataId      = $dataId
         groupName   = $Group
@@ -30,27 +37,30 @@ foreach ($file in $files) {
         type        = 'yaml'
     }
     try {
-        $published = Invoke-RestMethod -Method Post -Uri "http://$ServerAddr/nacos/v3/admin/cs/config" `
-            -Headers $headers -Body $body -ContentType 'application/x-www-form-urlencoded' -TimeoutSec 15
+        $published = Invoke-RestMethod -Method Post -Uri "$base/nacos/v3/admin/cs/config" `
+            -Headers $headers -Body $body -ContentType 'application/x-www-form-urlencoded; charset=utf-8' -TimeoutSec 15
+        if ($published.code -ne 0) { throw 'Rejected by Nacos.' }
     } catch {
-        # The request body and identity headers are not echoed; only the data id and server.
-        throw "Nacos publish failed for $dataId at $ServerAddr`: $($_.Exception.Message)"
-    }
-    if ($published.code -ne 0) {
-        throw "Nacos publish rejected for $dataId`: code=$($published.code) message=$($published.message)"
+        # Server and parser diagnostics may echo submitted content or credentials.
+        throw "Nacos publish failed for $dataId. Check the controlled administrative identity and server health."
     }
 
-    # The client read path can briefly trail the write; retry a few times before failing.
+    $query = 'dataId=' + [Uri]::EscapeDataString($dataId) + '&groupName=' + [Uri]::EscapeDataString($Group) +
+        '&namespaceId=' + [Uri]::EscapeDataString($NamespaceId)
     $matched = $false
     for ($attempt = 1; $attempt -le 5 -and !$matched; $attempt++) {
-        $readBack = Invoke-RestMethod -Method Get `
-            -Uri "http://$ServerAddr/nacos/v3/client/cs/config?dataId=$dataId&groupName=$Group&namespaceId=$NamespaceId" `
-            -TimeoutSec 15
-        $matched = $readBack.code -eq 0 -and $readBack.data -and
-            [string]::Equals([string]$readBack.data.content, $content, [StringComparison]::Ordinal)
-        if (!$matched) { Start-Sleep -Milliseconds 200 }
+        try {
+            $readBack = Invoke-RestMethod -Method Get -Uri "$base/nacos/v3/client/cs/config?$query" `
+                -Headers $headers -TimeoutSec 15
+            $matched = $readBack.code -eq 0 -and $readBack.data -and
+                [string]::Equals([string]$readBack.data.content, $content, [StringComparison]::Ordinal)
+        } catch {
+            $matched = $false
+        }
+        if (!$matched -and $attempt -lt 5) { Start-Sleep -Milliseconds 200 }
     }
-    if (!$matched) { throw "Nacos read-back mismatch for $dataId; the imported configuration is not active." }
-    Write-Host "IMPORTED $dataId group=$Group namespace=$NamespaceId bytes=$($content.Length)"
+    if (!$matched) { throw "Nacos read-back failed for $dataId. Check availability and read permission; no content was logged." }
+    $byteCount = [Text.Encoding]::UTF8.GetByteCount($content)
+    Write-Host "IMPORTED $dataId group=$Group namespace=$NamespaceId bytes=$byteCount"
 }
-Write-Host 'Nacos configuration import and read-back passed.'
+Write-Host 'Nacos configuration import and read-back passed. Restart gateway and user service to apply changes.'

@@ -343,15 +343,22 @@ class AuthenticationFlowTest {
             for (var probe : probes) {
                 system.awaitUserApplicationLog("requestId=" + probe.requestId());
             }
-            var lines = Files.readAllLines(system.userApplicationLog(), StandardCharsets.UTF_8);
             for (var probe : probes) {
-                long matching = lines.stream()
-                        .filter(line -> line.contains("requestId=" + probe.requestId())
-                                && line.contains("path=" + probe.path()))
-                        .count();
-                assertThat(matching)
-                        .as("one concurrent request's path and correlation id must stay on one line: " + probe)
-                        .isEqualTo(1);
+                system.awaitUserApplicationLog("completedRequestId=" + probe.requestId());
+                assertThat(probe.status()).isEqualTo(404);
+            }
+            var lines = Files.readAllLines(system.userApplicationLog(), StandardCharsets.UTF_8);
+            var gatewayLines = Files.readAllLines(system.gatewayApplicationLog(), StandardCharsets.UTF_8);
+            for (var probe : probes) {
+                for (var serviceLines : List.of(lines, gatewayLines)) {
+                    assertThat(serviceLines.stream().filter(line -> line.contains("http requestId=" + probe.requestId())
+                                    && line.contains("path=" + probe.path())).toList())
+                            .as("MDC and response ID agree for the same real request in both services")
+                            .singleElement().asString().contains("[requestId=" + probe.requestId() + "]");
+                }
+                assertThat(lines.stream().filter(line -> line.contains("completedRequestId=" + probe.requestId()))
+                        .toList()).as("MDC is cleared after the real servlet filter chain")
+                        .singleElement().asString().contains("[requestId=none]", "remainingMdc=empty");
             }
         } finally {
             executor.shutdownNow();
@@ -891,7 +898,7 @@ class AuthenticationFlowTest {
     }
 
     /** Actual service processes and disposable infrastructure, reusable by later HTTP flow slices. */
-    private static final class AuthenticationSystem implements AutoCloseable {
+    static final class AuthenticationSystem implements AutoCloseable {
         private final String runId = UUID.randomUUID().toString().replace("-", "");
         private final java.util.concurrent.atomic.AtomicInteger probeCounter = new java.util.concurrent.atomic.AtomicInteger();
         private final String discoveryGroup = "AUTH_HTTP_" + runId;
@@ -914,6 +921,8 @@ class AuthenticationFlowTest {
                 new java.util.concurrent.atomic.AtomicInteger();
         private int gatewayPort;
         private int userPort;
+        private int userHealthPort;
+        private RunningApplication user;
         private String userClasspath;
         private String gatewayClasspath;
         private MySQLContainer database;
@@ -988,7 +997,7 @@ class AuthenticationFlowTest {
             environment.put("BYTE_JUDGE_RUNTIME_DIR", logs.resolve("runtime").toString());
             environment.put("SERVER_TOMCAT_ACCESSLOG_ENABLED", "true");
             environment.put("SERVER_TOMCAT_ACCESSLOG_BUFFERED", "false");
-            environment.put("SERVER_TOMCAT_ACCESSLOG_PATTERN", "%m %U%q %s");
+            environment.put("SERVER_TOMCAT_ACCESSLOG_PATTERN", "%m %U %s %{X-Request-ID}o");
 
             userEnvironment = Map.of(
                     "SPRING_DATASOURCE_URL", database.getJdbcUrl(),
@@ -996,7 +1005,11 @@ class AuthenticationFlowTest {
                     "SPRING_DATASOURCE_PASSWORD", database.getPassword(),
                     "SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE", "3",
                     "SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT", "5000",
-                    "SPRING_FLYWAY_ENABLED", "true");
+                    "SPRING_FLYWAY_ENABLED", "true",
+                    // User-owned audit identifiers; kept here so the authentication slice stays
+                    // runnable once the audit slice is merged.
+                    "BYTE_JUDGE_AUDIT_WORKER_ID", "0",
+                    "BYTE_JUDGE_AUDIT_DATACENTER_ID", "0");
             initializeAdministrator(userEnvironment);
             createFixtureUser(ordinaryUser);
             createFixtureUser(disabledUser);
@@ -1006,7 +1019,8 @@ class AuthenticationFlowTest {
                 int healthPort = managementPort.getLocalPort();
                 port.close();
                 managementPort.close();
-                var user = launch("user", userClasspath, "com.jack.bytejudge.user.UserApplication", List.of(),
+                userHealthPort = healthPort;
+                user = launch("user", userClasspath, "com.jack.bytejudge.user.UserApplication", List.of(),
                         webEnvironment(userEnvironment, "user", userPort, healthPort));
                 awaitHealth(user, healthPort, true);
                 awaitDiscovery(nacos, "byte-judge-user-model", userPort);
@@ -1085,6 +1099,15 @@ class AuthenticationFlowTest {
             assertThat(JSON.readTree(response.body()).path("code").asInt(-1)).as(response.body()).isZero();
         }
 
+        void removeCommonConfig() throws Exception {
+            deleteNacosConfig("byte-judge-common.yml");
+        }
+
+        void restoreCommonConfig() throws Exception {
+            publishNacosConfig("byte-judge-common.yml", Files.readString(
+                    backend.resolve("infra/nacos/config/byte-judge-common.yml"), StandardCharsets.UTF_8));
+        }
+
         void removeUserConfig() throws Exception {
             deleteNacosConfig("byte-judge-user-model.yml");
         }
@@ -1143,8 +1166,15 @@ class AuthenticationFlowTest {
 
         private RunningApplication launch(String name, String classpath, String mainClass,
                                           List<String> options, Map<String, String> overrides) throws Exception {
+            return launch(name, classpath, mainClass, options, overrides, logs.resolve("homes/" + name));
+        }
+
+        private RunningApplication launch(String name, String classpath, String mainClass,
+                                          List<String> options, Map<String, String> overrides, Path configHome) throws Exception {
+            Files.createDirectories(configHome);
             Path arguments = logs.resolve(name + ".args");
-            Files.writeString(arguments, "-Xmx256m\n-Dfile.encoding=UTF-8\n-DJM.LOG.PATH=\""
+            Files.writeString(arguments, "-Xmx256m\n-Dfile.encoding=UTF-8\n-Duser.home=\""
+                    + configHome.toString().replace('\\', '/') + "\"\n-DJM.LOG.PATH=\""
                     + logs.resolve(name + "/nacos").toString().replace('\\', '/')
                     + "\"\n-cp\n\"" + classpath.replace('\\', '/') + "\"\n" + mainClass + "\n"
                     + String.join("\n", options) + "\n", StandardCharsets.UTF_8);
@@ -1175,8 +1205,14 @@ class AuthenticationFlowTest {
          * It is not tracked as a live application, so it cannot fail later health assertions.
          */
         ProbeResult startProbe(Map<String, String> overrides, Duration timeout) throws Exception {
+            return startProbe(overrides, timeout, logs.resolve("homes/probe-" + UUID.randomUUID()));
+        }
+
+        private ProbeResult startProbe(Map<String, String> overrides, Duration timeout, Path configHome) throws Exception {
+            Files.createDirectories(configHome);
             Path arguments = logs.resolve("probe-" + probeCounter.incrementAndGet() + ".args");
-            Files.writeString(arguments, "-Xmx256m\n-Dfile.encoding=UTF-8\n-DJM.LOG.PATH=\""
+            Files.writeString(arguments, "-Xmx256m\n-Dfile.encoding=UTF-8\n-Duser.home=\""
+                    + configHome.toString().replace('\\', '/') + "\"\n-DJM.LOG.PATH=\""
                     + logs.resolve("probe/nacos").toString().replace('\\', '/')
                     + "\"\n-cp\n\"" + userClasspath.replace('\\', '/') + "\"\n"
                     + "com.jack.bytejudge.user.UserApplication\n", StandardCharsets.UTF_8);
@@ -1210,6 +1246,136 @@ class AuthenticationFlowTest {
                     process.destroyForcibly();
                 }
             }
+        }
+
+        void awaitUserConfigSnapshot() throws Exception {
+            Path configHome = logs.resolve("homes/user");
+            await("user Nacos configuration snapshot", Duration.ofSeconds(20), () -> {
+                try (var files = Files.walk(configHome)) {
+                    return files.filter(Files::isRegularFile)
+                            .filter(path -> path.getFileName().toString().equals("byte-judge-user-model.yml"))
+                            .anyMatch(path -> {
+                                try {
+                                    return Files.readString(path).contains("ingress: false");
+                                } catch (IOException unreadable) {
+                                    return false;
+                                }
+                            });
+                }
+            });
+        }
+
+        void disconnectNacos() throws Exception {
+            // Pause the disposable server: same address and data, but no request or heartbeat is
+            // answered. This is a real runtime disconnection without depending on a cold restart.
+            nacos.getDockerClient().pauseContainerCmd(nacos.getContainerId()).exec();
+            awaitContainerPaused(true, Duration.ofSeconds(30));
+            System.out.println("NACOS_RUNTIME disconnected");
+        }
+
+        void reconnectNacos() throws Exception {
+            nacos.getDockerClient().unpauseContainerCmd(nacos.getContainerId()).exec();
+            awaitContainerPaused(false, Duration.ofSeconds(30));
+            URI ready = URI.create("http://" + nacos.getHost() + ":" + nacos.getMappedPort(8080)
+                    + "/v3/console/health/readiness");
+            try {
+                await("resumed Nacos readiness", Duration.ofMinutes(2), () -> get(ready).statusCode() == 200);
+            } catch (AssertionError failedReadiness) {
+                throw new AssertionError("Resumed Nacos never became ready; container state="
+                        + containerState().getState(), failedReadiness);
+            }
+            awaitDiscovery(nacos, "byte-judge-user-model", userPort);
+            awaitDiscovery(nacos, "byte-judge-gateway", gatewayPort);
+            System.out.println("NACOS_RUNTIME reconnected and both services registered");
+        }
+
+        private void awaitContainerPaused(boolean paused, Duration timeout) throws Exception {
+            long deadline = System.nanoTime() + timeout.toNanos();
+            while (System.nanoTime() < deadline) {
+                if (containerState().getState().getPaused() == paused) {
+                    return;
+                }
+                TimeUnit.MILLISECONDS.sleep(200);
+            }
+            throw new AssertionError("Nacos container did not reach paused=" + paused + "; state="
+                    + containerState().getState());
+        }
+
+        private com.github.dockerjava.api.command.InspectContainerResponse containerState() {
+            return nacos.getDockerClient().inspectContainerCmd(nacos.getContainerId()).exec();
+        }
+
+        record StartupEvidence(int healthStatus, String output) { }
+
+        StartupEvidence startCachedConfigOnlyUser() throws Exception {
+            return startIsolatedUser("cached-user", logs.resolve("homes/user"));
+        }
+
+        StartupEvidence startRecoveredConfigUser() throws Exception {
+            return startIsolatedUser("recovered-user", logs.resolve("homes/recovered-user"));
+        }
+
+        private StartupEvidence startIsolatedUser(String name, Path configHome) throws Exception {
+            try (var port = reservePort(); var management = reservePort()) {
+                int healthPort = management.getLocalPort();
+                var extra = new HashMap<>(webEnvironment(userEnvironment, name, port.getLocalPort(), healthPort));
+                extra.put("SPRING_CLOUD_NACOS_DISCOVERY_ENABLED", "false");
+                extra.put("SPRING_CLOUD_DISCOVERY_ENABLED", "false");
+                extra.put("SPRING_CLOUD_NACOS_CONFIG_TIMEOUT", "1000");
+                extra.put("BYTE_JUDGE_LOG_DIR", logs.resolve(name).toString());
+                port.close();
+                management.close();
+                var application = launch(name, userClasspath, "com.jack.bytejudge.user.UserApplication",
+                        List.of(), extra, configHome);
+                try {
+                    awaitHealth(application, healthPort, true);
+                    int status = get(URI.create("http://127.0.0.1:" + healthPort + "/actuator/health")).statusCode();
+                    return new StartupEvidence(status, application.output());
+                } finally {
+                    applications.remove(application);
+                    application.close();
+                }
+            }
+        }
+
+        ProbeResult startCachedUserWithDiscovery() throws Exception {
+            return startProbe(Map.of("SPRING_CLOUD_NACOS_DISCOVERY_ENABLED", "true",
+                    "SPRING_CLOUD_DISCOVERY_ENABLED", "true", "SPRING_CLOUD_NACOS_CONFIG_TIMEOUT", "1000"),
+                    Duration.ofSeconds(150), logs.resolve("homes/user"));
+        }
+
+        void stopUserAndAwaitDeregistration() throws Exception {
+            applications.remove(user);
+            user.close();
+            URI uri = nacosUri("/nacos/v3/client/ns/instance/list?serviceName=byte-judge-user-model&groupName="
+                    + discoveryGroup);
+            await("user instance removed from discovery", Duration.ofSeconds(60), () -> {
+                var response = get(uri);
+                var body = JSON.readTree(response.body());
+                if (response.statusCode() != 200 || body.path("code").asInt(-1) != 0) {
+                    return false;
+                }
+                for (var instance : body.path("data")) {
+                    if (instance.path("port").asInt() == userPort && instance.path("healthy").asBoolean()) {
+                        return false;
+                    }
+                }
+                return true;
+            });
+            System.out.println("NACOS_RUNTIME user stopped and no healthy instance remains");
+        }
+
+        void restartUser() throws Exception {
+            user = launch("user-restarted", userClasspath, "com.jack.bytejudge.user.UserApplication", List.of(),
+                    webEnvironment(userEnvironment, "user", userPort, userHealthPort));
+            awaitHealth(user, userHealthPort, true);
+            awaitDiscovery(nacos, "byte-judge-user-model", userPort);
+            System.out.println("NACOS_RUNTIME user restarted and registered");
+        }
+
+        void awaitGatewayIdentity(Browser browser) throws Exception {
+            await("gateway identity after user recovery", Duration.ofSeconds(60),
+                    () -> getNoWait(browser, "/api/v1/users/me").statusCode() == 200);
         }
 
         Browser newBrowser() {
@@ -1293,7 +1459,7 @@ class AuthenticationFlowTest {
             String path = probe("/api/v1/auth/csrf");
             var response = browser.perform(HttpRequest.newBuilder(gatewayUri(path))
                     .timeout(Duration.ofSeconds(10)).GET());
-            awaitUserAccess("GET", path, response.statusCode());
+            awaitUserAccess("GET", path, response);
             var body = JSON.readTree(response.body());
             return new CsrfToken(response, body.path("data").path("headerName").asText(),
                     body.path("data").path("token").asText());
@@ -1390,7 +1556,7 @@ class AuthenticationFlowTest {
                 builder.header(headerName, token);
             }
             var response = browser.perform(builder);
-            awaitUserAccess("POST", probed, response.statusCode());
+            awaitUserAccess("POST", probed, response);
             return response;
         }
 
@@ -1428,11 +1594,25 @@ class AuthenticationFlowTest {
             awaitApplicationLog(gatewayApplicationLog(), expected, Duration.ofSeconds(20));
         }
 
+        void assertLogsExcludeSecrets(List<String> requestSecrets) throws Exception {
+            var secrets = new ArrayList<>(requestSecrets);
+            secrets.addAll(List.of(administrator.password(), ordinaryUser.password(), database.getPassword(),
+                    redisPassword, internalCredential, "{argon2}", "$argon2"));
+            try (var files = Files.walk(logs)) {
+                for (var file : files.filter(Files::isRegularFile)
+                        .filter(path -> path.getFileName().toString().endsWith(".log")).toList()) {
+                    String content = Files.readString(file, StandardCharsets.UTF_8);
+                    assertThat(secrets.stream().anyMatch(content::contains))
+                            .as("sensitive value must not appear in %s", file.getFileName()).isFalse();
+                }
+            }
+        }
+
         HttpResponse<String> get(Browser browser, String path) throws Exception {
             String probed = probe(path);
             var response = browser.perform(HttpRequest.newBuilder(gatewayUri(probed))
                     .timeout(Duration.ofSeconds(10)).GET());
-            awaitUserAccess("GET", probed, response.statusCode());
+            awaitUserAccess("GET", probed, response);
             return response;
         }
 
@@ -1625,18 +1805,22 @@ class AuthenticationFlowTest {
             });
         }
 
-        void awaitUserAccess(String method, String path, int status) throws Exception {
+        void awaitUserAccess(String method, String path, HttpResponse<String> response) throws Exception {
+            String safePath = URI.create(path).getRawPath();
+            int status = response.statusCode();
+            String requestId = response.headers().firstValue("X-Request-ID").orElseThrow();
             Path directory = logs.resolve("user/access");
-            await("downstream user access for " + path, Duration.ofSeconds(20), () -> {
+            await("downstream user access for " + safePath, Duration.ofSeconds(20), () -> {
                 if (!Files.isDirectory(directory)) {
                     return false;
                 }
                 try (var files = Files.list(directory)) {
                     for (var file : files.filter(Files::isRegularFile).toList()) {
                         for (var line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
-                            // Access pattern is "%m %U%q %s"; %q renders "-" when the URL has no query.
-                            if (line.contains(method + " " + path) && line.endsWith(" " + status)) {
-                                System.out.println("AUTH_HTTP_DOWNSTREAM " + method + " " + path + " " + status);
+                            // Correlate this exact response without logging query values or cookies.
+                            if (line.equals(method + " " + safePath + " " + status + " " + requestId)) {
+                                System.out.println("AUTH_HTTP_DOWNSTREAM " + method + " " + safePath + " "
+                                        + status + " requestId=" + requestId);
                                 return true;
                             }
                         }

@@ -17,9 +17,9 @@ spring:
   profiles:
     default: local
   config:
-    # Required external configuration: startup fails when Nacos is unreachable or when the
-    # service's Nacos document omits a required value. `optional:` is deliberately not used.
-    # Environment-specific credentials and connection endpoints stay in the controlled env/file.
+    # Required values are validated in WebProtocolConfiguration because this client may return
+    # an empty source for a missing Data ID. A valid local snapshot can satisfy the import.
+    # Credentials and connection endpoints stay in the controlled environment/file.
     import:
       - "classpath:byte-judge-session.yml"
       # The group comes from spring.cloud.nacos.config.group below; the location itself keeps
@@ -35,6 +35,7 @@ spring:
         group: ${NACOS_CONFIG_GROUP:BYTE_JUDGE}
       discovery:
         server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
+        namespace: ${NACOS_DISCOVERY_NAMESPACE:}
         group: ${NACOS_DISCOVERY_GROUP:BYTE_JUDGE}
         ip: ${SERVICE_IP:127.0.0.1}
 server:
