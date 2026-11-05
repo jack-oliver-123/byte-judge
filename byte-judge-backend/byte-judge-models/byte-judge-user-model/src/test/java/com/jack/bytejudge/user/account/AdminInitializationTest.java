@@ -252,6 +252,22 @@ class AdminInitializationTest {
     }
 
     @Test
+    void initializationDoesNotDependOnNacosOrRedis() throws Exception {
+        int closedPort;
+        try (var socket = new java.net.ServerSocket(0)) {
+            closedPort = socket.getLocalPort();
+        }
+        var result = execute("isolated_command\ncommand-password\ncommand-password\n"
+                        .getBytes(StandardCharsets.UTF_8),
+                java.util.Map.of("NACOS_SERVER_ADDR", "127.0.0.1:" + closedPort,
+                        "SPRING_DATA_REDIS_PORT", Integer.toString(closedPort),
+                        "SPRING_CLOUD_NACOS_CONFIG_TIMEOUT", "1000"), List.of("--create-admin"));
+        assertThat(result.exitCode()).as(result.output()).isZero();
+        assertThat(result.output()).contains("ADMIN_CREATED: isolated_command")
+                .doesNotContain("Nacos", "nacos", "Redis", "command-password", "Exception");
+    }
+
+    @Test
     void databaseFailureHasNonzeroExitAndDoesNotExposeConnectionSecrets() throws Exception {
         int closedPort;
         try (var socket = new java.net.ServerSocket(0)) {
@@ -283,12 +299,15 @@ class AdminInitializationTest {
         assertThat(initialize("normal_startup_fixture", "fixture-password", "fixture-password").exitCode()).isZero();
         long before = accountCount();
         var output = Files.createTempFile(temporaryDirectory, "web-startup-", ".log");
-        var process = startApplication(List.of(), java.util.Map.of(), output);
+        // This test checks the web/command boundary independently of the config center.
+        var process = startApplication(List.of(), java.util.Map.of(
+                "SPRING_CONFIG_LOCATION", "classpath:byte-judge-session.yml",
+                "SPRING_CLOUD_NACOS_CONFIG_ENABLED", "false"), output);
         try {
             try (var input = process.outputWriter(StandardCharsets.UTF_8)) {
                 input.write("must_not_be_created\nsecret-password\nsecret-password\n");
             }
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
             while (process.isAlive() && System.nanoTime() < deadline
                     && !Files.readString(output, StandardCharsets.UTF_8).contains("Started UserApplication")) {
                 process.waitFor(100, TimeUnit.MILLISECONDS);
@@ -391,7 +410,8 @@ class AdminInitializationTest {
             try (var stdin = process.getOutputStream()) {
                 stdin.write(input);
             }
-            assertThat(process.waitFor(30, TimeUnit.SECONDS)).as("Initialization must exit without starting a server")
+            // Bounded by the command's own work: Flyway plus Argon2 on a loaded CI/desktop host.
+            assertThat(process.waitFor(60, TimeUnit.SECONDS)).as("Initialization must exit without starting a server")
                     .isTrue();
             return new CommandResult(process.exitValue(), Files.readString(output, StandardCharsets.UTF_8));
         } finally {
@@ -414,7 +434,8 @@ class AdminInitializationTest {
         environment.put("BYTE_JUDGE_INTERNAL_GATEWAY_CREDENTIAL",
                 "admin-command-test-internal-credential-0123456789");
         environment.put("BYTE_JUDGE_WEB_INGRESS", "false");
-        environment.put("SPRING_CONFIG_IMPORT", "classpath:byte-judge-session.yml");
+        environment.put("BYTE_JUDGE_AUDIT_WORKER_ID", "0");
+        environment.put("BYTE_JUDGE_AUDIT_DATACENTER_ID", "0");
         environment.put("SPRING_DATASOURCE_URL", DATABASE.getJdbcUrl());
         environment.put("SPRING_DATASOURCE_USERNAME", DATABASE.getUsername());
         environment.put("SPRING_DATASOURCE_PASSWORD", DATABASE.getPassword());

@@ -1,7 +1,9 @@
 package com.jack.bytejudge.user.config;
 
+import com.baomidou.mybatisplus.core.incrementer.DefaultIdentifierGenerator;
 import com.jack.bytejudge.common.core.response.ApiError;
 import com.jack.bytejudge.common.core.security.SessionIdentity;
+import com.jack.bytejudge.common.web.ProtectedPaths;
 import com.jack.bytejudge.common.web.RequestLogFilter;
 import com.jack.bytejudge.common.web.SecurityErrorWriter;
 import com.jack.bytejudge.common.web.SessionConfiguration;
@@ -76,7 +78,8 @@ public class WebSecurityConfiguration {
                                     .SecurityContextHolder.getContext().getAuthentication();
                             if (authentication != null
                                     && authentication.getPrincipal() instanceof SessionIdentity identity
-                                    && request.getRequestURI().startsWith("/api/v1/admin/")) {
+                                    && ProtectedPaths.isAdministrative(
+                                            ProtectedPaths.routingPath(request))) {
                                 audit.record(new AuthAuditEntry(AuthEvent.ADMIN_ACCESS,
                                         AuthOutcome.DENIED, identity.userId(), identity.account(), "ROLE",
                                         RequestLogFilter.requestId(request)));
@@ -162,8 +165,10 @@ public class WebSecurityConfiguration {
     }
 
     @Bean
-    AuthAudit authAudit(AuthAuditMapper mapper) {
-        return new MybatisAuthAudit(mapper);
+    AuthAudit authAudit(AuthAuditMapper mapper,
+                        @Value("${byte-judge.audit.worker-id}") long workerId,
+                        @Value("${byte-judge.audit.datacenter-id}") long datacenterId) {
+        return new MybatisAuthAudit(mapper, new DefaultIdentifierGenerator(workerId, datacenterId));
     }
 
     @Bean

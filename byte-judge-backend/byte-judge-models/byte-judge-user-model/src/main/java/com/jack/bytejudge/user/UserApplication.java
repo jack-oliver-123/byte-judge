@@ -17,7 +17,6 @@ public class UserApplication {
             // The controlled initialization command only needs the database and password
             // components. Keep it independent of Nacos Config and the web runtime, so a missing
             // config center cannot block account provisioning.
-            System.setProperty("spring.config.import", "classpath:byte-judge-session.yml");
             System.exit(CreateAdminCommand.run());
             return;
         }
