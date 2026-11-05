@@ -1,0 +1,16 @@
+# Only the user-owned database is required for local account provisioning.
+byte-judge:
+  audit:
+    worker-id: 0
+    datacenter-id: 0
+spring:
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/bj_user?connectionTimeZone=UTC
+    username: bj_user
+    password: ${MYSQL_USER_PASSWORD}
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+      connection-timeout: 5000
+  flyway:
+    enabled: true

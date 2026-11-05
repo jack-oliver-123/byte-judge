@@ -6,9 +6,13 @@ import com.jack.bytejudge.common.web.RequestLogFilter;
 import com.jack.bytejudge.user.account.domain.AccountInputException;
 import com.jack.bytejudge.user.auth.domain.AlreadyAuthenticatedException;
 import com.jack.bytejudge.user.auth.domain.NotAuthenticatedException;
+import com.jack.bytejudge.user.auth.domain.PermissionDeniedException;
+import com.jack.bytejudge.user.auth.domain.SessionRejectedException;
 import com.jack.bytejudge.user.auth.interfaces.http.InvalidRequestException;
+import com.jack.bytejudge.user.auth.interfaces.internal.InternalAccessDeniedException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -32,6 +36,30 @@ public class WebErrorAdvice {
     @ExceptionHandler(NotAuthenticatedException.class)
     ResponseEntity<ApiResponse<Void>> notAuthenticated(HttpServletRequest request) {
         return respond(ApiError.NOT_AUTHENTICATED, request);
+    }
+
+    /** The session points at an account whose current status, role or epoch no longer matches. */
+    @ExceptionHandler(SessionRejectedException.class)
+    ResponseEntity<ApiResponse<Void>> sessionRejected(HttpServletRequest request) {
+        return respond(ApiError.NOT_AUTHENTICATED, request);
+    }
+
+    @ExceptionHandler(InternalAccessDeniedException.class)
+    ResponseEntity<ApiResponse<Void>> internalAccessDenied(HttpServletRequest request) {
+        return respond(ApiError.ACCESS_DENIED, request);
+    }
+
+    @ExceptionHandler(PermissionDeniedException.class)
+    ResponseEntity<ApiResponse<Void>> permissionDenied(HttpServletRequest request) {
+        return respond(ApiError.ACCESS_DENIED, request);
+    }
+
+    /** A required authoritative lookup could not complete, so protected work was not executed. */
+    @ExceptionHandler(DataAccessException.class)
+    ResponseEntity<ApiResponse<Void>> storageUnavailable(HttpServletRequest request, DataAccessException failure) {
+        LoggerFactory.getLogger("bytejudge.http").error("storage unavailable requestId={} type={}",
+                RequestLogFilter.requestId(request), failure.getClass().getName());
+        return respond(ApiError.SYSTEM_UNAVAILABLE, request);
     }
 
     /** Authentication failures raised by Spring Security's AuthenticationManager. */

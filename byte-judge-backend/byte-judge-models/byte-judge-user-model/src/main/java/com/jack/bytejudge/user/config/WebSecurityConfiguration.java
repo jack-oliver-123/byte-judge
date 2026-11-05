@@ -1,17 +1,33 @@
 package com.jack.bytejudge.user.config;
 
+import com.baomidou.mybatisplus.core.incrementer.DefaultIdentifierGenerator;
+import com.jack.bytejudge.common.core.response.ApiError;
+import com.jack.bytejudge.common.core.security.SessionIdentity;
+import com.jack.bytejudge.common.web.ProtectedPaths;
+import com.jack.bytejudge.common.web.RequestLogFilter;
 import com.jack.bytejudge.common.web.SecurityErrorWriter;
 import com.jack.bytejudge.common.web.SessionConfiguration;
 import com.jack.bytejudge.common.web.WebProtocolConfiguration;
 import com.jack.bytejudge.user.auth.application.Authenticator;
+import com.jack.bytejudge.user.auth.application.IdentityRevalidator;
+import com.jack.bytejudge.user.auth.application.port.AccountAuthority;
 import com.jack.bytejudge.user.auth.application.port.AccountLookup;
+import com.jack.bytejudge.user.auth.application.port.AuthAudit;
 import com.jack.bytejudge.user.auth.application.port.PasswordMatcher;
 import com.jack.bytejudge.user.auth.domain.AccountDisabledException;
 import com.jack.bytejudge.user.auth.domain.InvalidCredentialsException;
-import com.jack.bytejudge.common.core.security.SessionIdentity;
+import com.jack.bytejudge.user.auth.domain.model.AuthAuditEntry;
+import com.jack.bytejudge.user.auth.domain.model.AuthEvent;
+import com.jack.bytejudge.user.auth.domain.model.AuthOutcome;
+import com.jack.bytejudge.user.auth.infrastructure.persistence.mapper.AuthAuditMapper;
 import com.jack.bytejudge.user.auth.infrastructure.persistence.mapper.UserAccountMapper;
+import com.jack.bytejudge.user.auth.infrastructure.persistence.repository.MybatisAccountAuthority;
 import com.jack.bytejudge.user.auth.infrastructure.persistence.repository.MybatisAccountLookup;
+import com.jack.bytejudge.user.auth.infrastructure.persistence.repository.MybatisAuthAudit;
+import com.jack.bytejudge.user.auth.interfaces.http.IdentityRevalidationFilter;
+import com.jack.bytejudge.user.auth.interfaces.internal.InternalCallGuard;
 import org.mybatis.spring.annotation.MapperScan;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
@@ -27,6 +43,8 @@ import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.intercept.AuthorizationFilter;
+import org.springframework.security.web.csrf.CsrfException;
 import org.springframework.security.web.csrf.CsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
@@ -42,20 +60,44 @@ import java.util.List;
 public class WebSecurityConfiguration {
     @Bean
     SecurityFilterChain userSecurity(HttpSecurity http, CsrfTokenRepository csrfTokenRepository,
-                                     SecurityContextRepository securityContextRepository) throws Exception {
+                                     SecurityContextRepository securityContextRepository,
+                                     IdentityRevalidator identityRevalidator,
+                                     AuthAudit audit) throws Exception {
         http.authorizeHttpRequests(authorize -> authorize
+                        .requestMatchers("/internal/v1/**").permitAll()
+                        .requestMatchers("/api/v1/admin/**").hasAuthority("ROLE_admin")
                         .requestMatchers("/api/v1/users/me").authenticated()
                         .anyRequest().permitAll())
                 .securityContext(context -> context.securityContextRepository(securityContextRepository))
                 .exceptionHandling(handling -> handling
                         .authenticationEntryPoint(SecurityErrorWriter.authenticationEntryPoint())
-                        .accessDeniedHandler(SecurityErrorWriter.accessDeniedHandler()))
+                        .accessDeniedHandler((request, response, failure) -> {
+                            // Permission denials are audited by the owning service, without request details.
+                            Authentication authentication = org.springframework.security.core.context
+                                    .SecurityContextHolder.getContext().getAuthentication();
+                            if (authentication != null
+                                    && authentication.getPrincipal() instanceof SessionIdentity identity
+                                    && ProtectedPaths.isAdministrative(
+                                            ProtectedPaths.routingPath(request))) {
+                                audit.record(new AuthAuditEntry(AuthEvent.ADMIN_ACCESS,
+                                        AuthOutcome.DENIED, identity.userId(), identity.account(), "ROLE",
+                                        RequestLogFilter.requestId(request)));
+                            }
+                            SecurityErrorWriter.writeError(request, response,
+                                    failure instanceof CsrfException ? ApiError.CSRF_INVALID : ApiError.ACCESS_DENIED);
+                        }))
                 .requestCache(cache -> cache.disable())
                 .formLogin(login -> login.disable())
                 .httpBasic(basic -> basic.disable())
                 .logout(logout -> logout.disable())
                 .csrf(csrf -> csrf.csrfTokenRepository(csrfTokenRepository)
-                        .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler()));
+                        // Internal calls authenticate with the dedicated service identity instead.
+                        .ignoringRequestMatchers("/internal/v1/**")
+                        .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler()))
+                // Created inline so Spring Boot does not also register it as a servlet filter outside
+                // the security chain.
+                .addFilterBefore(new IdentityRevalidationFilter(identityRevalidator, audit),
+                        AuthorizationFilter.class);
         return http.build();
     }
 
@@ -78,7 +120,8 @@ public class WebSecurityConfiguration {
                 try {
                     SessionIdentity identity = authenticator.authenticate(
                             (String) authentication.getPrincipal(),
-                            ((String) authentication.getCredentials()).toCharArray());
+                            ((String) authentication.getCredentials()).toCharArray(),
+                            RequestLogFilter.currentRequestId());
                     return UsernamePasswordAuthenticationToken.authenticated(identity, null,
                             List.of(new SimpleGrantedAuthority(SessionIdentity.ROLE_PREFIX + identity.role())));
                 } catch (InvalidCredentialsException invalid) {
@@ -97,13 +140,36 @@ public class WebSecurityConfiguration {
     }
 
     @Bean
-    Authenticator authenticator(AccountLookup accounts, PasswordMatcher passwords) {
-        return new Authenticator(accounts, passwords);
+    Authenticator authenticator(AccountLookup accounts, PasswordMatcher passwords, AuthAudit audit) {
+        return new Authenticator(accounts, passwords, audit);
     }
 
     @Bean
     AccountLookup accountLookup(UserAccountMapper mapper) {
         return new MybatisAccountLookup(mapper);
+    }
+
+    @Bean
+    AccountAuthority accountAuthority(UserAccountMapper mapper) {
+        return new MybatisAccountAuthority(mapper);
+    }
+
+    @Bean
+    IdentityRevalidator identityRevalidator(AccountAuthority accounts) {
+        return new IdentityRevalidator(accounts);
+    }
+
+    @Bean
+    AuthAudit authAudit(AuthAuditMapper mapper,
+                        @Value("${byte-judge.audit.worker-id}") long workerId,
+                        @Value("${byte-judge.audit.datacenter-id}") long datacenterId) {
+        return new MybatisAuthAudit(mapper, new DefaultIdentifierGenerator(workerId, datacenterId));
+    }
+
+    @Bean
+    InternalCallGuard internalCallGuard(
+            @Value("${byte-judge.internal.gateway-credential}") String gatewayCredential) {
+        return new InternalCallGuard(gatewayCredential);
     }
 
     @Bean

@@ -67,8 +67,9 @@ public final class CreateAdminCommand {
                     .web(WebApplicationType.NONE)
                     .bannerMode(Banner.Mode.OFF)
                     .logStartupInfo(false)
-                    .properties("logging.level.root=OFF", "mybatis-plus.global-config.banner=false")
-                    .run()) {
+                    // Command invariants must outrank imported logging configuration.
+                    .run("--spring.config.name=admin-command", "--spring.cloud.nacos.config.enabled=false",
+                            "--logging.level.root=OFF", "--mybatis-plus.global-config.banner=false")) {
                 // A disabled migration must not silently create an account against an unverified schema.
                 context.getBean(Flyway.class);
                 String normalized = context.getBean(AdministratorCreator.class).create(account, password, confirmation);

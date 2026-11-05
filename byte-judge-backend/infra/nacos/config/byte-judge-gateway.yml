@@ -1,0 +1,14 @@
+# Gateway-specific non-sensitive runtime configuration.
+#
+# Data ID: byte-judge-gateway.yml
+# Group:   BYTE_JUDGE (override with NACOS_CONFIG_GROUP)
+#
+# `ingress: true` means this process is the public entry point: a client-supplied
+# X-Request-ID is ignored and a fresh one is generated for each request. The value has no
+# local default, so a missing document stops startup instead of silently trusting clients.
+byte-judge:
+  web:
+    ingress: true
+logging:
+  pattern:
+    file: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] [service=gateway] [requestId=%X{requestId:-none}] %logger{36} - %msg%n"

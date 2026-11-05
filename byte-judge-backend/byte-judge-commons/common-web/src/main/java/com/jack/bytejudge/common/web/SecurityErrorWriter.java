@@ -28,6 +28,12 @@ public final class SecurityErrorWriter {
                 failure instanceof CsrfException ? ApiError.CSRF_INVALID : ApiError.ACCESS_DENIED);
     }
 
+    /** Shared error exit for filters that reject before MVC or Security's own handlers run. */
+    public static void writeError(HttpServletRequest request, HttpServletResponse response, ApiError error)
+            throws IOException {
+        write(request, response, error);
+    }
+
     private static void write(HttpServletRequest request, HttpServletResponse response, ApiError error)
             throws IOException {
         response.setStatus(error.status());
