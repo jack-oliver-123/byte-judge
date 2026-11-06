@@ -28,4 +28,12 @@ public class WebProtocolConfiguration {
         bean.setOrder(Ordered.HIGHEST_PRECEDENCE);
         return bean;
     }
+
+    /** Runs directly inside the correlation filter so it can rewrite a failed response. */
+    @Bean
+    FilterRegistrationBean<ContractErrorFilter> contractErrorFilter() {
+        var bean = new FilterRegistrationBean<>(new ContractErrorFilter());
+        bean.setOrder(Ordered.HIGHEST_PRECEDENCE + 10);
+        return bean;
+    }
 }

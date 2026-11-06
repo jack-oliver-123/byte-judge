@@ -43,6 +43,23 @@ smoke-test.ps1 失败抛错并返回非零。验证六服务 UP 和 Nacos 健康
 
 网关按 docs/04 §2.3 显式配置四组 lb:// 路由，保留原始路径；没有服务名通配路由，judge、/internal/v1/** 和下游 Actuator 不匹配公共路由，返回 404。访问日志仅记录方法、路径和状态，本地探针用后可清理 log/<服务简称>/access，避免未来敏感参数进入日志。
 
+## 交付验收顺序
+
+从空环境验收后端认证能力时按以下顺序执行；每一步的通过标准不同，不能互相替代。
+
+1. **Java 21 与构建**：`. ./scripts/use-java21.ps1` 后执行 `./mvnw.cmd clean package`；通过标准是全部 reactor 模块 SUCCESS 且测试通过。
+2. **基础设施**：`./scripts/start-infra.ps1`（首次由 `init-local.ps1` 生成 `.env.local`）；通过标准是四个容器 healthy。
+3. **Nacos 配置导入**：`. ./scripts/local-env.ps1` 后执行 `./scripts/import-nacos-config.ps1`；通过标准是三个 Data ID 逐字读回。服务启动不会代替导入。
+4. **数据库迁移**：用户服务启动时执行 Flyway `V1`～`V3`。不得清库或改为 baseline；已有库数据必须保留。
+5. **管理员初始化**：`java -jar ... --create-admin` 交互输入账户、密码与确认密码，成功退出码为 0 并输出 `ADMIN_CREATED`；不要把密码放进命令行、脚本或历史。
+6. **启动服务**：`./scripts/start-services.ps1`；网关和用户服务从 Nacos 读取必需配置并完成健康注册。
+7. **底座冒烟**：`./scripts/smoke-test.ps1`，覆盖健康、注册、四库账号、Redis/RabbitMQ 与四条路由的下游证据；单独 404 或 Actuator UP 不算业务验收。
+8. **认证业务验收**：按[认证接口](docs/auth-api.md#powershell-调用)执行 GET CSRF 并保存 Cookie → 登录（提交 CSRF 头）→ `GET /users/me` → `GET /admin/users/me` → 退出。登录与退出后旧 CSRF 失效，必须重新获取；失败时读取统一响应中的 `code` 与 `requestId`。
+9. **故障与恢复**：按[依赖故障与恢复](docs/auth-api.md#依赖故障与恢复)在隔离环境暂停 Redis/MySQL 或停止用户实例，确认返回 503 且不建立身份；恢复后重新获取 CSRF 并完成合法流程。不要删除本地卷。
+10. **停止**：先 `./scripts/stop-services.ps1` 结束网关与用户服务，再 `docker compose --env-file .env.local stop` 停止基础设施；需要回收容器时用 `docker compose --env-file .env.local down`，只有明确不需要保留数据时才追加 `-v`。停止/重启后按第 2、6、8 步确认连接、路由与认证仍可用。
+
+权限、限频、跨实例、闲置、并发撤销和故障场景的自动化入口与已执行结果记录在下方各任务记录；构建、连接验证、底座冒烟与认证验收分别记录，未执行项会注明原因。
+
 当前依赖按服务声明，根 POM 只管理版本与构建规则，两个聚合层保持纯 POM；common-core 保持无框架依赖的普通 JAR，common-web 承载 MVC / Security / Session / 日志适配且只被网关与用户服务依赖。Spring Boot 父工程管理编译、测试、打包插件及其生态依赖版本；Cloud、Alibaba、MyBatis-Plus 分别使用 BOM。Enforcer 检查 Java 21、Maven 3.9+，阻止 Boot2/3 MyBatis-Plus starter、WebFlux starter 和可执行服务模块间的代码依赖。
 
 | 模块 | 主要依赖 |
@@ -151,3 +168,18 @@ Java 21.0.11、Maven Wrapper 3.9.15 下执行 `mvnw clean package -B`，10 个 r
 评审后加固：撤销写入不再使用 `ON DUPLICATE KEY UPDATE` 吞掉唯一键冲突。重复或并发撤销同一会话仍按摘要幂等成功；若写入失败且该摘要不存在（雪花主键与另一会话冲突），异常向上传播，退出/核验返回 503 而不是假成功。新增 `MybatisSessionRevocationTest` 3 项。随后再次执行 `mvnw.cmd -B clean package`：11 个 reactor 项全部 SUCCESS，119 项测试全部通过（0 failure、0 error、0 skipped，13 分 25 秒），其中网关 10 项、用户服务 109 项，`CrossInstanceSessionTest` 9 项 89.87 秒、`SessionContractTest` 2 项 165.7 秒。输出位于 `log/build/auth9-security-fix-package.log`。
 
 限制：未真实等待 30 分钟，而是从运行实例会话哈希断言 1800 秒并用独立短超时验证边界；Redis 索引哈希本身有额外 5 分钟影子过期，不能以键 TTL 代替认证过期判断；未验证撤销记录长期增长后的归档/清理（明确不在本切片自动删除）；未做认证吞吐压测；未执行全底座 `smoke-test.ps1`（注册、端口和路由未变）。
+
+2026-11-06，任务 #12：依赖故障时拒绝受保护操作并完成交付验收。新增最外层 `ContractErrorFilter`（common-web，`Ordered.HIGHEST_PRECEDENCE + 10`）：Redis 会话读取/保存失败、网关负载均衡与代理异常等逃出过滤链的故障不再落到框架默认错误页；过滤器丢弃可能已缓冲的部分成功响应，恢复 `X-Request-ID` 与 `Cache-Control: no-store` 后写出统一契约，客户端断开导致的原始 I/O 异常仍重抛。新增网关 `GatewayErrorAdvice`，覆盖路由处理器内的 404/405/415、上游状态、依赖不可用与未知异常。`RestIdentityVerifier` 的连接/读取超时改为可配置（默认 1s/2s，`BYTE_JUDGE_IDENTITY_CONNECT_TIMEOUT` / `BYTE_JUDGE_IDENTITY_READ_TIMEOUT`），核验失败记录 `identity verification failed requestId=... type=...` 并返回 503；`ApiError.forStatus` 统一 HTTP 状态到数值业务码，补充 `41500 UNSUPPORTED_MEDIA_TYPE`，因为非 JSON 请求体是既有真实错误出口，统一契约必须覆盖。所有出口保留真实 HTTP 状态、五个字段和 `requestId` 关联，响应与日志不含 SQL、堆栈、内部地址、口令、摘要、会话值或内部凭据。
+
+故障注入只存在于测试 classpath 的 `auth-http-test` profile（`Auth12FaultProbe`），发布制品没有对应开关。测试以 Docker pause/unpause 制造 Redis、MySQL 故障，恢复后容器数据保留，不删除卷、不清库。`DependencyFailureFlowTest` 5 项真实 HTTP 覆盖：暂停 Redis 后，经网关与直连的受保护请求、登录和 CSRF 获取均返回 503 契约，失败保存不下发可用 Cookie；恢复后未撤销会话继续 200，已退出会话仍为 401。暂停 MySQL 后网关与直连的权威核验返回 503，恢复后返回 200。内部核验延迟 15 秒时，网关在配置的读取超时内返回 503（远小于下游延迟，证明是超时而不是等待完成），并留下可关联日志；恢复后同一 Cookie 返回 200。无下游实例与指向已关闭端口的实例分别产生 503 契约。错误出口矩阵逐一断言 400/401/403/404/405/409/415/429/500/503 的状态、数值码、五字段、`requestId` 关联、`serverTime` 格式，以及响应不含异常、JDBC、SQL、Argon2 摘要、会话或口令材料。
+
+Java 21.0.11、Maven Wrapper 3.9.15 下执行 `mvnw.cmd -B clean package`：11 个 reactor 项全部 SUCCESS，124 项测试全部通过（0 failure、0 error、0 skipped，20 分 05 秒），其中网关 10 项、用户服务 114 项（管理员初始化 35、认证 HTTP 32、跨实例会话 9、依赖故障 5、会话契约 2、Nacos 运行时 5、撤销持久化 3、限频 10、限频配置 2、认证器 6、来源解析 5）。输出位于 `log/build/issue12-full-package.log`。
+
+| 测试入口 | 覆盖 | 本次结果 |
+| --- | --- | --- |
+| `./mvnw.cmd -B clean package` | 全部 reactor 模块与测试 | 124/124 通过，20 分 05 秒 |
+| `-Dtest=DependencyFailureFlowTest` | 依赖故障、超时、恢复与错误出口矩阵 | 5/5 通过（全量中 132.1 秒） |
+| `-Dtest=AuthenticationFlowTest` | 既有认证流程回归 | 32/32 通过 |
+| `-Dtest=CrossInstanceSessionTest,SessionContractTest` | 会话撤销、跨实例与过期回归 | 11/11 通过 |
+
+跳过项与原因：`scripts/smoke-test.ps1` 未复跑（注册、端口与路由未变，属例行全底座验收）；手工 PowerShell 暂停演练未重复（自动化以同样的 pause/unpause 路径执行并断言响应）；本轮未做持续故障、吞吐、时钟漂移或丢包模拟，恢复断言在恢复后立即执行。范围边界：不包含前端、公开注册、改密/找回、用户管理、判题与生产部署；测试使用一次性容器，不触碰既有本地数据。构建成功不替代上述业务验收，未执行项按本表保留。

@@ -24,16 +24,21 @@ public final class RestIdentityVerifier implements IdentityVerifier {
     private final String serviceId;
     private final IdentityVerificationClient client;
 
-    public RestIdentityVerifier(LoadBalancerClient loadBalancer, String serviceId, String credential) {
+    public RestIdentityVerifier(LoadBalancerClient loadBalancer, String serviceId, String credential,
+                                Duration connectTimeout, Duration readTimeout) {
         if (credential == null || credential.length() < 32) {
             throw new IllegalStateException(
                     "byte-judge.internal.gateway-credential must be at least 32 characters.");
         }
+        if (connectTimeout.isZero() || connectTimeout.isNegative()
+                || readTimeout.isZero() || readTimeout.isNegative()) {
+            throw new IllegalStateException("Identity verification timeouts must be positive.");
+        }
         this.loadBalancer = loadBalancer;
         this.serviceId = serviceId;
-        var http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1)).build();
+        var http = HttpClient.newBuilder().connectTimeout(connectTimeout).build();
         var factory = new JdkClientHttpRequestFactory(http);
-        factory.setReadTimeout(Duration.ofSeconds(2));
+        factory.setReadTimeout(readTimeout);
         var restClient = RestClient.builder().requestFactory(factory)
                 .defaultHeader("X-Internal-Service", "gateway")
                 .defaultHeader("X-Internal-Credential", credential)

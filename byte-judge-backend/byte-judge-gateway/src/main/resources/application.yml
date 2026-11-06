@@ -2,6 +2,12 @@ byte-judge:
   internal:
     # Same controlled service identity as the user service expects for the gateway.
     gateway-credential: ${BYTE_JUDGE_INTERNAL_GATEWAY_CREDENTIAL}
+  gateway:
+    identity:
+      # Required protected-request verification. When the user service cannot answer within these
+      # bounds the gateway refuses the request instead of trusting the browser's session cookie.
+      connect-timeout: ${BYTE_JUDGE_IDENTITY_CONNECT_TIMEOUT:1s}
+      read-timeout: ${BYTE_JUDGE_IDENTITY_READ_TIMEOUT:2s}
 spring:
   application:
     name: byte-judge-gateway

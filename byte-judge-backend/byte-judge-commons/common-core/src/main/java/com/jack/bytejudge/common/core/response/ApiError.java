@@ -28,4 +28,24 @@ public enum ApiError {
     public int code() { return code; }
     public int status() { return status; }
     public String message() { return message; }
+
+    /**
+     * Maps an HTTP status produced outside MVC's typed exceptions onto the frozen error contract.
+     * Dependency and unavailable states collapse to 503 so a gateway or storage fault is never
+     * reported as a business success or as an unrelated 500.
+     */
+    public static ApiError forStatus(int status) {
+        return switch (status) {
+            case 400 -> INVALID_REQUEST;
+            case 401 -> NOT_AUTHENTICATED;
+            case 403 -> ACCESS_DENIED;
+            case 404 -> NOT_FOUND;
+            case 405 -> METHOD_NOT_ALLOWED;
+            case 409 -> ALREADY_AUTHENTICATED;
+            case 415 -> UNSUPPORTED_MEDIA_TYPE;
+            case 429 -> LOGIN_RATE_LIMITED;
+            case 502, 503, 504 -> SYSTEM_UNAVAILABLE;
+            default -> status >= 500 ? INTERNAL_ERROR : INVALID_REQUEST;
+        };
+    }
 }

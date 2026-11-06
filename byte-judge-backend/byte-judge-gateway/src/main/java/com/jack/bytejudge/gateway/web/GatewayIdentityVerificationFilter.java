@@ -10,6 +10,8 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
@@ -20,6 +22,7 @@ import java.io.IOException;
  * The gateway does not read or modify the session, and it refuses internal paths outright.
  */
 public final class GatewayIdentityVerificationFilter extends OncePerRequestFilter {
+    private static final Logger HTTP_LOG = LoggerFactory.getLogger("bytejudge.http");
     private static final String SESSION_COOKIE = "BJSESSION";
 
     private final IdentityVerifier verifier;
@@ -46,10 +49,14 @@ public final class GatewayIdentityVerificationFilter extends OncePerRequestFilte
             return;
         }
         IdentityVerifier.VerificationResult result;
+        String requestId = RequestLogFilter.requestId(request);
         try {
-            result = verifier.verify(sessionId, path, RequestLogFilter.requestId(request));
+            result = verifier.verify(sessionId, path, requestId);
         } catch (RuntimeException unavailable) {
-            // Required verification did not complete: refuse before any protected work runs.
+            // Required verification did not complete: refuse before any protected work runs. Only
+            // the correlation id and exception type are logged; no address, body or credential.
+            HTTP_LOG.warn("identity verification failed requestId={} type={}", requestId,
+                    unavailable.getClass().getName());
             SecurityErrorWriter.writeError(request, response, ApiError.SYSTEM_UNAVAILABLE);
             return;
         }

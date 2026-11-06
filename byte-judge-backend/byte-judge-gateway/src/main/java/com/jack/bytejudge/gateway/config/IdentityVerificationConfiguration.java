@@ -10,12 +10,17 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 
+import java.time.Duration;
+
 @Configuration(proxyBeanMethods = false)
 public class IdentityVerificationConfiguration {
     @Bean
     IdentityVerifier identityVerifier(LoadBalancerClient loadBalancerClient,
-                                      @Value("${byte-judge.internal.gateway-credential}") String gatewayCredential) {
-        return new RestIdentityVerifier(loadBalancerClient, "byte-judge-user-model", gatewayCredential);
+                                      @Value("${byte-judge.internal.gateway-credential}") String gatewayCredential,
+                                      @Value("${byte-judge.gateway.identity.connect-timeout}") Duration connectTimeout,
+                                      @Value("${byte-judge.gateway.identity.read-timeout}") Duration readTimeout) {
+        return new RestIdentityVerifier(loadBalancerClient, "byte-judge-user-model", gatewayCredential,
+                connectTimeout, readTimeout);
     }
 
     @Bean

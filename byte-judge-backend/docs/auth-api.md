@@ -1,6 +1,6 @@
 # 登录、当前身份、退出与管理员权限接口
 
-本文对应 #7、#8、#9、#10。调用入口为本地网关 `http://127.0.0.1:8080`；部署使用同源 HTTPS。管理员先按 [初始化说明](admin-initialization.md) 创建，普通用户由受控测试夹具准备，当前没有公开注册接口。
+本文对应 #7、#8、#9、#10、#12。调用入口为本地网关 `http://127.0.0.1:8080`；部署使用同源 HTTPS。管理员先按 [初始化说明](admin-initialization.md) 创建，普通用户由受控测试夹具准备，当前没有公开注册接口。
 
 ## 协议
 
@@ -43,6 +43,42 @@
 
 错误优先级取决于安全过滤器：例如没有有效 CSRF 的 POST 先返回 403，再进行 JSON 解析。错误信息不包含原始请求体、底层 SQL、堆栈或连接信息。
 
+各状态适用场景：
+
+| HTTP | 典型场景 |
+| --- | --- |
+| 400 | 登录字段缺失、类型错误、JSON 解析失败、账户/密码不符合输入规则 |
+| 401 | 无 Cookie、会话过期或已撤销、账户状态/角色/`authEpoch` 已变化、内部接口的会话无效 |
+| 403 | 已登录普通用户访问管理接口、CSRF 缺失或无效、账户不可登录、内部服务凭据无效 |
+| 404 | 未映射路径、公共入口的 `/internal/**` 与下游 Actuator |
+| 405 | 路径存在但方法不支持（如 GET 登录接口） |
+| 409 | 已登录时再次登录；其他冲突不使用该状态 |
+| 415 | 登录请求的 Content-Type 不是 JSON |
+| 429 | 登录失败达到阈值；带 `Retry-After` 与 `data.retryAfterSeconds` |
+| 500 | 未知内部错误；日志只记录请求标识和异常类型 |
+| 503 | Redis、MySQL 或身份核验服务等必需依赖不可用，或网关没有可用下游；受保护操作未执行 |
+
+## 依赖故障与恢复
+
+所有错误出口共享同一响应契约：MVC 参数/业务/未知异常由用户服务 `WebErrorAdvice` 处理；Security 认证、授权与 CSRF 拒绝由安全处理器写出；逃出过滤链的共享存储和网关转发故障由 `ContractErrorFilter` 写出；网关自身的路由、负载均衡和代理异常由 `GatewayErrorAdvice` 写出。任何出口都保留真实 HTTP 状态，`code` 与 `requestId` 可关联，且不返回异常文本。
+
+- **Redis 不可用**：读取或保存共享会话失败时，用户服务和网关均返回 `503/50300`；登录不会建立可用身份，受保护业务不会执行。获取 CSRF 需要保存会话，因此同样返回 503，且不向客户端下发可用于后续认证的会话 Cookie。限频所需的 Redis 操作失败同样在认证完成前终止请求。
+- **MySQL 不可用**：账户、角色、认证版本和撤销记录的权威读取失败时返回 `503/50300`，不会回退到仅信任 Session 快照或客户端身份头；登录不会因无法写入审计或无法读取账户而成功。
+- **网关身份核验不可用**：无可用用户实例、连接失败、超时或非预期响应均在代理前返回 `503/50300`。只有用户服务以 401/403 明确拒绝时，网关才分别返回 401/403；它不会把任何故障当作已认证。
+- **超时边界**：网关内部身份核验的 `byte-judge.gateway.identity.connect-timeout`（默认 1s）与 `read-timeout`（默认 2s）可通过 `BYTE_JUDGE_IDENTITY_CONNECT_TIMEOUT` / `BYTE_JUDGE_IDENTITY_READ_TIMEOUT` 覆盖；超时后请求被拒绝，网关日志记录 `identity verification failed requestId=... type=...`。Redis 的 `spring.data.redis.connect-timeout` / `timeout` 与数据库驱动的连接/读取超时由各环境显式配置（local 见 `application-local.yml`，测试使用 1～3 秒），不得依赖无限等待。
+- **下游错误**：没有实例时负载均衡给出 503；实例存在但连接被拒绝或确认超时同样映射为 `503/50300`。对经路由代理的业务下游，网关按其已生成的响应（包括错误体）原状态转发，不包装为 200；身份核验是代理前的内部调用，不属于被转发的响应，其非预期结果按上一条返回 503。
+- **恢复**：依赖恢复后先用同一浏览器重新获取 CSRF，再完成登录、当前身份和管理权限调用。已退出或已撤销的 Cookie 不会因恢复而复活；其撤销事实在用户库中持久存在，恢复只影响新请求的可执行性。暂停的 Redis 保留原有会话数据，未撤销的会话可继续使用；数据库恢复后权威核验随即重新生效。
+
+故障响应示例（HTTP 503）：
+
+```json
+{"code":50300,"data":null,"message":"Service temporarily unavailable","requestId":"6c0f4f5f-...","serverTime":"2026-11-06T02:00:00.000Z"}
+```
+
+未知内部错误（HTTP 500）只改变 `code`、`message` 与状态，结构与上例一致，不含堆栈、SQL、内部地址或凭据。
+
+手工演练可在隔离环境暂停依赖，不要删除本地卷或复用生产凭据：`docker compose --env-file .env.local pause redis`（或 `mysql`）观察上述状态，再用 `unpause` 恢复；停止唯一用户实例可观察网关 503，重启并等待注册后恢复。自动化使用独立 Testcontainers 容器，仅暂停、不删除数据。
+
 ## 登录失败限频
 
 仅 `POST /api/v1/auth/login` 受此限制；CSRF、身份查询、退出及公开资源不参与登录失败计数，也不会因账户或来源被限制而拒绝。
@@ -53,7 +89,7 @@
 - 窗口从某维度第一次失败起固定计算，后续失败不延长窗口；限制由 `SET NX` 创建，重复受限请求和并发失败都不延长，也不清除另一维度。成功登录不重置计数。限制到期时对应计数一并过期，下一次从零开始，避免到期后立即再次触发限制。
 - Redis 键只包含维度（`account`/`source`）、规范化账户或 IP、固定后缀 `:failures`/`:blocked` 及可配置命名空间，不包含密码、摘要、会话或 CSRF。默认命名空间为 `byte-judge:auth:login`。
 - 来源地址由网关 socket 对端确定：网关在转发前剥离客户端 `Forwarded`、`X-Forwarded-*` 与 `X-Internal-*`，再写入唯一的内部头 `X-Internal-Client-Address`。用户服务只有在直接对端属于 `byte-judge.web.trusted-proxies` 时才读取该头，且要求恰好一个合法 IP 字面量；否则使用 socket 对端。因此客户端提供的转发头或内部头不能选择计数来源；直连用户服务且不在可信代理列表中的客户端同样不能。生产必须把该列表配置为网关地址，本地默认值 `127.0.0.1,0:0:0:0:0:0:0:1` 只用于回环调试。
-- Redis 不可用时，限频检查失败向上抛出并映射为 503，认证不会在跳过限频的情况下完成；依赖故障的完整响应由最终集成切片验收。
+- Redis 不可用时，限频检查失败向上抛出并映射为 503，认证不会在跳过限频的情况下完成；HTTP 故障响应与恢复见[依赖故障与恢复](#依赖故障与恢复)。
 - 默认策略为 `byte-judge.auth.rate-limit.window=15m`、`max-failures=10`、`block-duration=15m`。测试使用独立命名空间和短限制验证时间边界，另行断言生产默认值，不使用长时间 sleep。
 
 ## Cookie 与令牌生命周期
@@ -202,7 +238,9 @@ try {
 
 会话契约与跨实例测试（`CrossInstanceSessionTest`、`SessionContractTest`）覆盖：两个同时存活的用户服务进程经同一 Cookie 服务受保护请求（用各自 access log 的请求标识证明分流）；运行实例实际应用 1800 秒默认闲置；短超时下活动续期与停止活动后的过期；退出只撤销当前会话、其他独立会话仍有效，旧 Cookie 经网关和两个实例直连均为 401；撤销记录以 32 字节摘要持久存在；协调请求在退出完成后保存旧会话，随后旧 Cookie 仍被拒绝；完整旧 Session 被重新写回 Redis 后仍被拒绝（移除撤销判定时该用例会以 200 失败）；只含属性字段、缺少必需字段的残片哈希经网关和两个实例直连均返回 401 而非 500（该场景没有撤销记录，单独验证残片处理）；禁用账户/递增 `authEpoch` 后下一次请求被拒、恢复状态或回退认证版本后旧会话均不复活、重新登录成功；用户实例重启后撤销仍有效。`MybatisSessionRevocationTest` 另以单元测试锁定：同会话重复撤销幂等成功，雪花主键冲突（摘要不存在）时异常向上传播，且只写入 32 字节摘要。
 
-登录失败限频的真实 HTTP 测试使用不同的环回来源地址和短限制配置（`block-duration=30s`），覆盖：来源维度跨多个账户累计及 429 契约、账户维度跨多个来源并验证规范化、20 个并发失败恰好 10 个通过阈值、伪造 `Forwarded`/`X-Forwarded-For`/`X-Real-IP`/`X-Internal-Client-Address` 不能改变来源、成功登录不重置来源计数、限制到期后正确登录恢复且重复 429 不延长 TTL（到期通过缩短测试键 TTL 模拟，不依赖长时间等待）、直连用户服务的非可信对端忽略内部头，以及 Redis 键不含凭据材料。生产默认 15m/10/15m 由独立配置绑定测试断言；限频不可用时的认证失败关闭由应用层单元测试覆盖，HTTP 503 的完整故障响应留待最终切片。
+登录失败限频的真实 HTTP 测试使用不同的环回来源地址和短限制配置（`block-duration=30s`），覆盖：来源维度跨多个账户累计及 429 契约、账户维度跨多个来源并验证规范化、20 个并发失败恰好 10 个通过阈值、伪造 `Forwarded`/`X-Forwarded-For`/`X-Real-IP`/`X-Internal-Client-Address` 不能改变来源、成功登录不重置来源计数、限制到期后正确登录恢复且重复 429 不延长 TTL（到期通过缩短测试键 TTL 模拟，不依赖长时间等待）、直连用户服务的非可信对端忽略内部头，以及 Redis 键不含凭据材料。生产默认 15m/10/15m 由独立配置绑定测试断言；限频不可用时的认证失败关闭由应用层单元测试覆盖，依赖不可用时的 HTTP 503 契约见[依赖故障与恢复](#依赖故障与恢复)。
+
+依赖故障验收由 `DependencyFailureFlowTest` 覆盖（5 项）：暂停 Redis 后，经网关与直连的受保护请求、登录和 CSRF 获取均返回 503 契约且不下发可用 Cookie；恢复后未撤销会话继续返回 200，已退出会话仍为 401（恢复后的重新获取 CSRF 与登录由认证流程测试单独覆盖）。暂停 MySQL 后，网关和直连的权威核验返回 503，恢复后重新返回 200。用户服务内部核验被人为延迟 15 秒时，网关在配置的读取超时内返回 503，并在应用日志留下可关联的失败类型；恢复后同一 Cookie 返回 200。无下游实例与指向已关闭端口的实例分别产生 503 契约。错误出口矩阵逐一断言 400/401/403/404/405/409/415/429/500/503 的状态、数值码、五个字段、`requestId` 关联、`serverTime` 格式以及响应与日志不含敏感材料。故障注入仅存在于测试 classpath 的 `auth-http-test` profile，发布制品没有对应开关。
 
 执行完整测试与构建：在后端根目录选择 Java 21 后运行 `./mvnw.cmd clean package`。只执行认证测试时，先构建网关及其测试运行类路径，再运行用户服务测试：
 
@@ -210,6 +248,7 @@ try {
 ./mvnw.cmd -pl :byte-judge-gateway -am test-compile -DskipTests
 ./mvnw.cmd -pl :byte-judge-user-model -am test -Dtest=AuthenticationFlowTest -Dsurefire.failIfNoSpecifiedTests=false
 ./mvnw.cmd -pl :byte-judge-user-model -am test -Dtest=CrossInstanceSessionTest,SessionContractTest -Dsurefire.failIfNoSpecifiedTests=false
+./mvnw.cmd -pl :byte-judge-user-model -am test -Dtest=DependencyFailureFlowTest -Dsurefire.failIfNoSpecifiedTests=false
 ```
 
 实际通过项、构建输出和未验证边界记录在后端 README；本文的协议不代替运行证据。

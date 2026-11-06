@@ -1105,11 +1105,15 @@ class AuthenticationFlowTest {
             environment.put("SERVER_TOMCAT_ACCESSLOG_BUFFERED", "false");
             environment.put("SERVER_TOMCAT_ACCESSLOG_PATTERN", "%m %U %s %{X-Request-ID}o");
             environment.put("BYTE_JUDGE_AUTH9_RACE_DIR", logs.resolve("race").toString());
+            environment.put("BYTE_JUDGE_AUTH12_PROBE_DIR", logs.resolve("probe").toString());
             environment.putAll(extraEnvironment);
             Files.createDirectories(logs.resolve("race"));
+            Files.createDirectories(logs.resolve("probe"));
 
             userEnvironment = Map.of(
-                    "SPRING_DATASOURCE_URL", database.getJdbcUrl(),
+                    // Bounded socket timeouts keep a paused database observable as a failure
+                    // instead of hanging a pooled query indefinitely during fault injection.
+                    "SPRING_DATASOURCE_URL", boundedJdbcUrl(database.getJdbcUrl()),
                     "SPRING_DATASOURCE_USERNAME", database.getUsername(),
                     "SPRING_DATASOURCE_PASSWORD", database.getPassword(),
                     "SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE", "3",
@@ -1381,40 +1385,88 @@ class AuthenticationFlowTest {
             // Pause the disposable server: same address and data, but no request or heartbeat is
             // answered. This is a real runtime disconnection without depending on a cold restart.
             nacos.getDockerClient().pauseContainerCmd(nacos.getContainerId()).exec();
-            awaitContainerPaused(true, Duration.ofSeconds(30));
+            awaitContainerPaused(nacos, true, Duration.ofSeconds(30));
             System.out.println("NACOS_RUNTIME disconnected");
         }
 
         void reconnectNacos() throws Exception {
             nacos.getDockerClient().unpauseContainerCmd(nacos.getContainerId()).exec();
-            awaitContainerPaused(false, Duration.ofSeconds(30));
+            awaitContainerPaused(nacos, false, Duration.ofSeconds(30));
             URI ready = URI.create("http://" + nacos.getHost() + ":" + nacos.getMappedPort(8080)
                     + "/v3/console/health/readiness");
             try {
                 await("resumed Nacos readiness", Duration.ofMinutes(2), () -> get(ready).statusCode() == 200);
             } catch (AssertionError failedReadiness) {
                 throw new AssertionError("Resumed Nacos never became ready; container state="
-                        + containerState().getState(), failedReadiness);
+                        + containerState(nacos).getState(), failedReadiness);
             }
             awaitDiscovery(nacos, "byte-judge-user-model", userPort);
             awaitDiscovery(nacos, "byte-judge-gateway", gatewayPort);
             System.out.println("NACOS_RUNTIME reconnected and both services registered");
         }
 
-        private void awaitContainerPaused(boolean paused, Duration timeout) throws Exception {
+        private void awaitContainerPaused(GenericContainer<?> container, boolean paused, Duration timeout)
+                throws Exception {
             long deadline = System.nanoTime() + timeout.toNanos();
             while (System.nanoTime() < deadline) {
-                if (containerState().getState().getPaused() == paused) {
+                if (containerState(container).getState().getPaused() == paused) {
                     return;
                 }
                 TimeUnit.MILLISECONDS.sleep(200);
             }
-            throw new AssertionError("Nacos container did not reach paused=" + paused + "; state="
-                    + containerState().getState());
+            throw new AssertionError(container.getDockerImageName() + " did not reach paused=" + paused
+                    + "; state=" + containerState(container).getState());
         }
 
-        private com.github.dockerjava.api.command.InspectContainerResponse containerState() {
-            return nacos.getDockerClient().inspectContainerCmd(nacos.getContainerId()).exec();
+        private com.github.dockerjava.api.command.InspectContainerResponse containerState(
+                GenericContainer<?> container) {
+            return container.getDockerClient().inspectContainerCmd(container.getContainerId()).exec();
+        }
+
+        /** Pauses a disposable dependency: the address stays reachable but no work completes. */
+        void pauseRedis() throws Exception {
+            pauseContainer(redis);
+        }
+
+        void resumeRedis() throws Exception {
+            resumeContainer(redis);
+        }
+
+        void pauseDatabase() throws Exception {
+            pauseContainer(database);
+        }
+
+        void resumeDatabase() throws Exception {
+            resumeContainer(database);
+        }
+
+        private void pauseContainer(GenericContainer<?> container) throws Exception {
+            container.getDockerClient().pauseContainerCmd(container.getContainerId()).exec();
+            awaitContainerPaused(container, true, Duration.ofSeconds(30));
+            System.out.println("DEPENDENCY_RUNTIME paused " + container.getDockerImageName());
+        }
+
+        private void resumeContainer(GenericContainer<?> container) throws Exception {
+            container.getDockerClient().unpauseContainerCmd(container.getContainerId()).exec();
+            awaitContainerPaused(container, false, Duration.ofSeconds(30));
+            System.out.println("DEPENDENCY_RUNTIME resumed " + container.getDockerImageName());
+        }
+
+        void setInternalVerificationDelay(Duration delay) throws Exception {
+            Path probeDirectory = logs.resolve("probe");
+            Files.createDirectories(probeDirectory);
+            Files.writeString(probeDirectory.resolve("internal-verify-delay-ms"),
+                    Long.toString(delay.toMillis()), StandardCharsets.UTF_8);
+        }
+
+        void clearInternalVerificationDelay() throws Exception {
+            Files.deleteIfExists(logs.resolve("probe").resolve("internal-verify-delay-ms"));
+        }
+
+        /** Polls a gateway response until the dependency has recovered. */
+        void awaitGatewayStatus(Browser browser, String path, int expected, Duration timeout) throws Exception {
+            await("gateway HTTP " + expected + " for " + path, timeout,
+                    () -> getNoWait(browser, path).statusCode() == expected);
         }
 
         record StartupEvidence(int healthStatus, String output) { }
@@ -1528,7 +1580,9 @@ class AuthenticationFlowTest {
 
         HttpResponse<String> directGetOn(int port, Browser browser, String path,
                                          Map<String, String> headers) throws Exception {
-            var builder = HttpRequest.newBuilder(userUriOn(port, path)).timeout(Duration.ofSeconds(10)).GET();
+            // Generous enough for a pooled connection to time out and be replaced during fault
+            // injection; normal direct calls answer in milliseconds.
+            var builder = HttpRequest.newBuilder(userUriOn(port, path)).timeout(Duration.ofSeconds(25)).GET();
             headers.forEach(builder::header);
             return browser.perform(builder);
         }
@@ -1903,8 +1957,15 @@ class AuthenticationFlowTest {
 
         /** Authenticated call that is expected to be refused at the gateway entry, before proxying. */
         HttpResponse<String> getNoWait(Browser browser, String path) throws Exception {
-            return browser.perform(HttpRequest.newBuilder(gatewayUri(probe(path)))
-                    .timeout(Duration.ofSeconds(10)).GET());
+            return getNoWait(browser, path, Map.of());
+        }
+
+        HttpResponse<String> getNoWait(Browser browser, String path, Map<String, String> headers)
+                throws Exception {
+            var builder = HttpRequest.newBuilder(gatewayUri(probe(path)))
+                    .timeout(Duration.ofSeconds(10)).GET();
+            headers.forEach(builder::header);
+            return browser.perform(builder);
         }
 
         HttpResponse<String> gatewayPost(String path, Map<String, String> headers, String body) throws Exception {
@@ -2213,6 +2274,10 @@ class AuthenticationFlowTest {
 
     private static ServerSocket reservePort() throws IOException {
         return new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"));
+    }
+
+    private static String boundedJdbcUrl(String url) {
+        return url + (url.contains("?") ? "&" : "?") + "socketTimeout=3000&connectTimeout=3000";
     }
 
     private static NacosPorts reserveNacosPorts() throws IOException {
