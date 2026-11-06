@@ -11,13 +11,12 @@ public interface RevokedSessionMapper {
     int countBySessionIdHash(@Param("hash") byte[] hash);
 
     /**
-     * The unique key makes concurrent or repeated revocations a no-op instead of an error. The
-     * statement has no other side effect, so an unrelated SQL failure is still surfaced.
+     * A duplicate key is surfaced rather than swallowed so the adapter can distinguish a repeated
+     * revocation from a snowflake-id collision; the latter must fail closed.
      */
     @Insert("""
             INSERT INTO revoked_session (id, sessionIdHash)
             VALUES (#{id}, #{hash})
-            ON DUPLICATE KEY UPDATE sessionIdHash = sessionIdHash
             """)
     void insert(@Param("id") long id, @Param("hash") byte[] hash);
 }

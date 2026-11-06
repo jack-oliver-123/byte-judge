@@ -138,7 +138,7 @@ Java 21.0.11、Maven Wrapper 3.9.15 下执行 `mvnw clean package -B`，10 个 r
 | rabbitmq:4.1.8-management | bf215c927c885b6d28bc52e02b0f2e1c033f2b439ec946c643834be93312ec4d |
 | nacos/nacos-server:v3.3.0 | bf18e41d09efd4e72edc46b010d42dca49f776421413cb2637be1fff0d6ef90f |
 
-2026-11-05，任务 #9：保证跨实例会话、闲置过期与撤销正确。新增用户库迁移 `V3__create_revoked_session.sql`（雪花主键、`sessionIdHash BINARY(32)` 唯一、UTC `revokedAt`，不保存原始 Cookie），并通过 `SessionRevocation` Port 和 MyBatis 适配器提供幂等撤销判定。退出先持久提交撤销事实，再清理 CSRF、Redis Session 和 Cookie；写入失败返回 503 而不是假成功。网关内部身份接口在读取 Redis 前检查撤销；用户直连的实时核验也按 Session ID 检查，并在账户/角色/状态/`authEpoch` 不匹配时先持久撤销再拒绝，因此恢复账户状态不能复活旧会话。共享 Session 适配器把撤销后由旧请求写出的、缺少必需字段的残片当作无效会话（401），避免 500；该适配器不吞 Redis 连接故障。
+2026-11-05，任务 #9：保证跨实例会话、闲置过期与撤销正确。新增用户库迁移 `V3__create_revoked_session.sql`（雪花主键、`sessionIdHash BINARY(32)` 唯一、UTC `revokedAt`，不保存原始 Cookie），并通过 `SessionRevocation` Port 和 MyBatis 适配器提供幂等撤销判定。退出先持久提交撤销事实，再清理 CSRF、Redis Session 和 Cookie；写入失败返回 503 而不是假成功。同一会话的重复或并发撤销按摘要幂等；写入因雪花主键与另一会话冲突而失败时不下发 `ON DUPLICATE KEY UPDATE`，只有确认该摘要已存在才视为成功，否则把冲突向上传播（退出 503），避免把未落库的撤销当作完成。网关内部身份接口在读取 Redis 前检查撤销；用户直连的实时核验也按 Session ID 检查，并在账户/角色/状态/`authEpoch` 不匹配时先持久撤销再拒绝，因此恢复账户状态不能复活旧会话。共享 Session 适配器把撤销后由旧请求写出的、缺少必需字段的残片当作无效会话（401），避免 500；该适配器不吞 Redis 连接故障。
 
 保留策略：撤销记录永久保留，不设 TTL 或自动清理。30 分钟闲置时限只约束不活动时长，不能证明撤销前已加载会话的在途请求到何时不会再保存；后续回收必须先证明最大请求生命周期或绝对会话寿命。热路径每受保护请求增加一次按唯一摘要的数据库查询，本切片未做吞吐压测。
 
@@ -147,5 +147,7 @@ Java 21.0.11、Maven Wrapper 3.9.15 下执行 `mvnw clean package -B`，10 个 r
 跨实例分流需注意：网关的入口身份核验会额外消费一次负载均衡选择，因此在恰好两个实例时，连续受保护请求的业务代理可能固定落在同一奇偶实例。测试在两次业务请求间交替一个公开请求以观察两个实例；这不是粘性路由，两个进程始终存活且共享会话。手工复现、撤销/保留语义和接口影响见 [认证接口](docs/auth-api.md#会话撤销闲置与跨实例)。
 
 随后在同一工作树以 Java 21.0.11 执行 `mvnw.cmd -B clean package`：11 个 reactor 项全部 SUCCESS，116 项测试全部通过（0 failure、0 error、0 skipped，16 分 09 秒），其中网关 10 项、用户服务 106 项；全量运行中 `CrossInstanceSessionTest` 9 项 143.4 秒、`SessionContractTest` 2 项 184.0 秒，`AuthenticationFlowTest` 32 项、`NacosRuntimeFlowTest` 5 项继续通过。输出位于 `log/build/auth9-full-package-review.log`。未重启本地六服务或重新执行全底座 `smoke-test.ps1`（注册、端口和路由未变）。
+
+评审后加固：撤销写入不再使用 `ON DUPLICATE KEY UPDATE` 吞掉唯一键冲突。重复或并发撤销同一会话仍按摘要幂等成功；若写入失败且该摘要不存在（雪花主键与另一会话冲突），异常向上传播，退出/核验返回 503 而不是假成功。新增 `MybatisSessionRevocationTest` 3 项。随后再次执行 `mvnw.cmd -B clean package`：11 个 reactor 项全部 SUCCESS，119 项测试全部通过（0 failure、0 error、0 skipped，13 分 25 秒），其中网关 10 项、用户服务 109 项，`CrossInstanceSessionTest` 9 项 89.87 秒、`SessionContractTest` 2 项 165.7 秒。输出位于 `log/build/auth9-security-fix-package.log`。
 
 限制：未真实等待 30 分钟，而是从运行实例会话哈希断言 1800 秒并用独立短超时验证边界；Redis 索引哈希本身有额外 5 分钟影子过期，不能以键 TTL 代替认证过期判断；未验证撤销记录长期增长后的归档/清理（明确不在本切片自动删除）；未做认证吞吐压测；未执行全底座 `smoke-test.ps1`（注册、端口和路由未变）。
