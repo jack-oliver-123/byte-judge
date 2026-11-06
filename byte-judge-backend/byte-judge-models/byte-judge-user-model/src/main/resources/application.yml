@@ -1,13 +1,47 @@
+byte-judge:
+  internal:
+    # Controlled service identity for the gateway's private identity verification call.
+    # Supplied by the environment; there is deliberately no insecure default.
+    gateway-credential: ${BYTE_JUDGE_INTERNAL_GATEWAY_CREDENTIAL}
+  auth:
+    rate-limit:
+      window: 15m
+      max-failures: 10
+      block-duration: 15m
+  web:
+    # Only these direct peers may supply a forwarding address used for login rate-limit accounting.
+    trusted-proxies: "127.0.0.1,0:0:0:0:0:0:0:1"
+  audit:
+    # Snowflake identifiers must be unique across every deployed user-service instance; there is
+    # deliberately no default so a missing deployment value fails closed instead of colliding.
+    worker-id: ${BYTE_JUDGE_AUDIT_WORKER_ID}
+    datacenter-id: ${BYTE_JUDGE_AUDIT_DATACENTER_ID}
 spring:
   application:
     name: byte-judge-user-model
   profiles:
     default: local
+  config:
+    # Required values are validated in WebProtocolConfiguration because this client may return
+    # an empty source for a missing Data ID. A valid local snapshot can satisfy the import.
+    # Credentials and connection endpoints stay in the controlled environment/file.
+    import:
+      - "classpath:byte-judge-session.yml"
+      # The group comes from spring.cloud.nacos.config.group below; the location itself keeps
+      # no environment-specific placeholder so the Data ID stays stable across environments.
+      - "nacos:byte-judge-common.yml?refreshEnabled=false"
+      - "nacos:byte-judge-user-model.yml?refreshEnabled=false"
   cloud:
     nacos:
+      # Config connection settings only. The imported documents contain no credentials.
+      config:
+        server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
+        namespace: ${NACOS_CONFIG_NAMESPACE:}
+        group: ${NACOS_CONFIG_GROUP:BYTE_JUDGE}
       discovery:
         server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
-        group: BYTE_JUDGE
+        namespace: ${NACOS_DISCOVERY_NAMESPACE:}
+        group: ${NACOS_DISCOVERY_GROUP:BYTE_JUDGE}
         ip: ${SERVICE_IP:127.0.0.1}
 server:
   port: ${SERVER_PORT:8081}

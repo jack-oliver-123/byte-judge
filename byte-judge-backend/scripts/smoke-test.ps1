@@ -16,7 +16,15 @@ try {
         }
         if (!$ready) { throw "$name health check failed." }
         $service = if ($name -eq 'gateway') { 'byte-judge-gateway' } else { "byte-judge-$name-model" }
-        $instances = Invoke-RestMethod "http://$env:NACOS_SERVER_ADDR/nacos/v3/client/ns/instance/list?serviceName=$service&groupName=BYTE_JUDGE" -TimeoutSec 10
+        $group = 'BYTE_JUDGE'
+        $namespace = 'public'
+        if ($name -in @('gateway', 'user')) {
+            if ($env:NACOS_DISCOVERY_GROUP) { $group = $env:NACOS_DISCOVERY_GROUP }
+            if ($env:NACOS_DISCOVERY_NAMESPACE) { $namespace = $env:NACOS_DISCOVERY_NAMESPACE }
+        }
+        $discoveryQuery = 'serviceName=' + [Uri]::EscapeDataString($service) + '&groupName=' +
+            [Uri]::EscapeDataString($group) + '&namespaceId=' + [Uri]::EscapeDataString($namespace)
+        $instances = Invoke-RestMethod "http://$env:NACOS_SERVER_ADDR/nacos/v3/client/ns/instance/list?$discoveryQuery" -TimeoutSec 10
         if ($instances.code -ne 0 -or !($instances.data | Where-Object { $_.healthy -and $_.port -eq (8080 + $index) })) { throw "$service is not registered healthy." }
         Write-Host "PASS health + discovery: $service"
     }
@@ -54,5 +62,41 @@ try {
         catch { if (!$_.Exception.Response -or [int]$_.Exception.Response.StatusCode -ne 404) { throw } }
     }
     Write-Host 'PASS public route allowlist.'
+
+    # Required Nacos Config is visible in the client processes, not only in the server console.
+    foreach ($check in @(
+            @('gateway', 'request correlation configured ingress=true'),
+            @('user', 'request correlation configured ingress=false'),
+            @('gateway', '[service=gateway]'),
+            @('user', '[service=user]'),
+            @('gateway', 'configContract=auth-infra-v1'),
+            @('user', 'configContract=auth-infra-v1'))) {
+        $applicationLog = Join-Path $env:BYTE_JUDGE_LOG_DIR "$($check[0])/application.log"
+        $deadline = (Get-Date).AddSeconds(30)
+        do {
+            $evidence = if (Test-Path $applicationLog) { Select-String -Path $applicationLog -SimpleMatch $check[1] } else { @() }
+            if ($evidence.Count -eq 0) { Start-Sleep -Seconds 1 }
+        } while ($evidence.Count -eq 0 -and (Get-Date) -lt $deadline)
+        if ($evidence.Count -eq 0) { throw "Missing Nacos Config application evidence in $applicationLog : $($check[1])" }
+        Write-Host "PASS Nacos Config applied in client: $($check[0]) $($check[1])"
+    }
+
+    # The same real HTTP call is visible in the gateway and user service application logs.
+    $csrfResponse = Invoke-WebRequest 'http://127.0.0.1:8080/api/v1/auth/csrf' -UseBasicParsing -TimeoutSec 10
+    $requestId = @($csrfResponse.Headers['X-Request-ID'])[0]
+    if (!$requestId) { throw 'Gateway response is missing X-Request-ID.' }
+    foreach ($service in @('gateway', 'user')) {
+        $applicationLog = Join-Path $env:BYTE_JUDGE_LOG_DIR "$service/application.log"
+        $deadline = (Get-Date).AddSeconds(20)
+        do {
+            $evidence = if (Test-Path $applicationLog) {
+                @(Select-String -Path $applicationLog -SimpleMatch "http requestId=$requestId" |
+                    Where-Object { $_.Line.Contains("[service=$service]") -and $_.Line.Contains("[requestId=$requestId]") })
+            } else { @() }
+            if ($evidence.Count -eq 0) { Start-Sleep -Seconds 1 }
+        } while ($evidence.Count -eq 0 -and (Get-Date) -lt $deadline)
+        if ($evidence.Count -eq 0) { throw "Missing request correlation evidence in $applicationLog for $requestId" }
+        Write-Host "PASS request correlation: $service requestId=$requestId"
+    }
     Write-Host 'PASS skeleton smoke test. Business, shared session, reliable messaging and sandbox remain unverified.'
 } finally { Pop-Location }
