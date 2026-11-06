@@ -86,6 +86,8 @@ MyBatis-Plus 固定 3.5.18，在根 POM 通过 mybatis-plus.version 和 BOM 管�
 
 认证请求日志由 common-web 的基础过滤器生成请求标识（非入口只接受合法格式的下游标识），写入响应头与 MDC，HTTP 完成日志包含请求 ID、方法、路径、状态和耗时，不含查询、请求体、Cookie 或凭据；入口总是重建 ID，下游仅接受一个长度 1～64 的字母/数字/下划线/短横线 ID。MVC 与 Security 错误出口都输出统一 `code/data/message/requestId/serverTime` 结构并保留真实 HTTP 状态。
 
+通用 MVC 异常通过继承 `common-web` 的 `CommonErrorAdvice` 接入，由网关与用户服务自己的 `@RestControllerAdvice` 承载，避免多个全局 Advice 的执行顺序影响业务错误。公共模块集中维护请求体解析、参数类型、404/405/415/500 的映射，并供最外层 `ContractErrorFilter` 复用；业务认证、429 与 `Retry-After`、上游状态及依赖异常仍由各自入口处理。公共异常日志统一为 `request failed requestId=... error=... type=...`（4xx WARN、5xx ERROR），不记录异常消息或堆栈。Filter 保留响应已提交时重抛、原始 I/O 失败重抛，以及故障时清除部分成功响应与 Cookie、恢复关联头的行为。公共模块的 HTTP 契约与过滤链测试可单独运行 `./mvnw.cmd -B -pl byte-judge-commons/common-web -am test`，完整回归仍使用 `./mvnw.cmd -B clean package`。
+
 Spring Security Web 与 Spring Session 的适配集中在 `common-web`，由网关和用户服务显式 `@Import`；Nacos Config 已为认证链路装配，Sentinel 仍待对应规则切片接入。starter 存在不能代表 Outbox、消息消费或迁移已实现。P-01 完整验证、其他原型与 AT 验收仍按架构文档执行，双 submission / judge 演练随后进行。
 
 ## 停止与恢复
@@ -183,3 +185,9 @@ Java 21.0.11、Maven Wrapper 3.9.15 下执行 `mvnw.cmd -B clean package`：11 �
 | `-Dtest=CrossInstanceSessionTest,SessionContractTest` | 会话撤销、跨实例与过期回归 | 11/11 通过 |
 
 跳过项与原因：`scripts/smoke-test.ps1` 未复跑（注册、端口与路由未变，属例行全底座验收）；手工 PowerShell 暂停演练未重复（自动化以同样的 pause/unpause 路径执行并断言响应）；本轮未做持续故障、吞吐、时钟漂移或丢包模拟，恢复断言在恢复后立即执行。范围边界：不包含前端、公开注册、改密/找回、用户管理、判题与生产部署；测试使用一次性容器，不触碰既有本地数据。构建成功不替代上述业务验收，未执行项按本表保留。
+
+2026-11-06，公共异常收敛：将请求体解析、参数类型、404/405/415/500 映射与脱敏错误日志集中到 `common-web`，网关与用户服务继承公共 MVC 兜底，过滤器复用同一通用规则；业务认证、限频、上游与依赖策略保留在各自入口。新增公共模块 HTTP 契约与过滤链测试，Java 21.0.11 下执行 `mvnw.cmd -B -pl byte-judge-commons/common-web -am test`，18 项全部通过（0 failure、0 error、0 skipped，10.6 秒），覆盖具体业务 handler 优先级、五字段/状态/错误码、日志脱敏、Servlet 异常解包、I/O 重抛、已提交响应以及清除部分成功响应与 Cookie。输出位于 `log/build/common-errors-focused.log`。
+
+初次全量运行在撤销持久化测试启动时，因 Windows PowerShell 的 `$ErrorActionPreference = 'Stop'` 把 Mockito 标准错误流警告当作 `NativeCommandError` 而中断，不能计为完整构建通过（`log/build/common-errors-full-package.log`）；此前已完成的测试均为零失败。重跑通过 `cmd.exe /d /c ".\mvnw.cmd -B clean package > log\build\common-errors-full-package2.log 2>&1"` 在原生命令层重定向两个输出流，避免警告触发 PowerShell 终止。
+
+重跑结果：Java 21.0.11、Maven Wrapper 3.9.15 下，11 个 reactor 项全部 SUCCESS，142 项测试全部通过（0 failure、0 error、0 skipped，17 分 34 秒）：公共模块 18 项、网关 10 项、用户服务 114 项。既有真实 HTTP 认证 32 项、跨实例会话 9 项、依赖故障与错误出口矩阵 5 项、Nacos 运行时 5 项、会话契约 2 项均通过；测试使用独立临时容器。独立源码审查未发现已确认的功能回归。完整输出位于 `log/build/common-errors-full-package2.log`。本次未重启已有本地六服务或复跑 `scripts/smoke-test.ps1`（注册、端口与路由未变），未执行生产部署或性能验证。
