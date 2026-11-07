@@ -30,12 +30,19 @@ try {
     }
     foreach ($owner in @('user', 'problem', 'submission', 'contest')) {
         $password = [Environment]::GetEnvironmentVariable("MYSQL_$($owner.ToUpper())_PASSWORD")
+        # The problem database/account keeps its legacy literal name (see infra/mysql/init template).
+        $dbName = if ($owner -eq 'problem') { 'bj_problem' } else { "bj_$owner" }
         $sql = "SELECT DATABASE(); SHOW GRANTS FOR CURRENT_USER();"
-        $grants = docker compose --env-file .env.local exec -T -e "MYSQL_PWD=$password" mysql mysql "-ubj_$owner" "bj_$owner" -N -e $sql
-        if ($LASTEXITCODE -ne 0 -or ($grants -join ' ') -notmatch "bj_$owner") { throw "$owner database connection failed." }
+        $grants = docker compose --env-file .env.local exec -T -e "MYSQL_PWD=$password" mysql mysql "-u$dbName" "$dbName" -N -e $sql
+        if ($LASTEXITCODE -ne 0 -or ($grants -join ' ') -notmatch [regex]::Escape($dbName)) { throw "$owner database connection failed." }
         foreach ($other in @('user', 'problem', 'submission', 'contest') | Where-Object { $_ -ne $owner }) {
-            docker compose --env-file .env.local exec -T -e "MYSQL_PWD=$password" mysql mysql "-ubj_$owner" "bj_$other" -e 'SELECT 1' 2>$null | Out-Null
-            if ($LASTEXITCODE -eq 0) { throw "$owner unexpectedly has access to bj_$other" }
+            $otherDb = if ($other -eq 'problem') { 'bj_problem' } else { "bj_$other" }
+            # Cross-db denial makes mysql write to stderr on purpose. Under Windows PowerShell 5.1,
+            # any redirected or captured native stderr (2>$null / 2>&1) becomes a NativeCommandError
+            # record, which the script's Stop preference would turn fatal. Run the check through
+            # cmd.exe so stderr is merged at the process level and only the exit code is observed.
+            $denied = cmd /c "docker compose --env-file .env.local exec -T -e MYSQL_PWD=$password mysql mysql -u$dbName $otherDb -e `"SELECT 1`" 2>&1"
+            if ($LASTEXITCODE -eq 0) { throw "$owner unexpectedly has access to $otherDb" }
         }
         Write-Host "PASS database ownership: $owner"
     }
@@ -83,7 +90,9 @@ try {
 
     # The same real HTTP call is visible in the gateway and user service application logs.
     $csrfResponse = Invoke-WebRequest 'http://127.0.0.1:8080/api/v1/auth/csrf' -UseBasicParsing -TimeoutSec 10
-    $requestId = @($csrfResponse.Headers['X-Request-ID'])[0]
+    # The gateway and the downstream service both emit the correlation header (same value), so
+    # Windows PowerShell 5.1 joins the duplicate response headers into 'id,id'. Take the first.
+    $requestId = (@($csrfResponse.Headers['X-Request-ID'])[0] -split ',')[0].Trim()
     if (!$requestId) { throw 'Gateway response is missing X-Request-ID.' }
     foreach ($service in @('gateway', 'user')) {
         $applicationLog = Join-Path $env:BYTE_JUDGE_LOG_DIR "$service/application.log"
