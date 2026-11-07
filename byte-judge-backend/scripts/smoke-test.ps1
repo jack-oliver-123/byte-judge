@@ -30,13 +30,12 @@ try {
     }
     foreach ($owner in @('user', 'problem', 'submission', 'contest')) {
         $password = [Environment]::GetEnvironmentVariable("MYSQL_$($owner.ToUpper())_PASSWORD")
-        # The problem database/account keeps its legacy literal name (see infra/mysql/init template).
-        $dbName = if ($owner -eq 'problem') { 'bj_problem' } else { "bj_$owner" }
+        $dbName = "bj_$owner"
         $sql = "SELECT DATABASE(); SHOW GRANTS FOR CURRENT_USER();"
         $grants = docker compose --env-file .env.local exec -T -e "MYSQL_PWD=$password" mysql mysql "-u$dbName" "$dbName" -N -e $sql
         if ($LASTEXITCODE -ne 0 -or ($grants -join ' ') -notmatch [regex]::Escape($dbName)) { throw "$owner database connection failed." }
         foreach ($other in @('user', 'problem', 'submission', 'contest') | Where-Object { $_ -ne $owner }) {
-            $otherDb = if ($other -eq 'problem') { 'bj_problem' } else { "bj_$other" }
+            $otherDb = "bj_$other"
             # Cross-db denial makes mysql write to stderr on purpose. Under Windows PowerShell 5.1,
             # any redirected or captured native stderr (2>$null / 2>&1) becomes a NativeCommandError
             # record, which the script's Stop preference would turn fatal. Run the check through
