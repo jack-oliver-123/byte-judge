@@ -10,6 +10,7 @@ public enum ApiError {
     NOT_FOUND(40400, 404, "Resource not found"),
     METHOD_NOT_ALLOWED(40500, 405, "Method not allowed"),
     ALREADY_AUTHENTICATED(40900, 409, "Log out before signing in again"),
+    VERSION_CONFLICT(40910, 409, "The resource was modified concurrently"),
     LOGIN_RATE_LIMITED(42900, 429, "Too many login attempts"),
     UNSUPPORTED_MEDIA_TYPE(41500, 415, "Unsupported media type"),
     INTERNAL_ERROR(50000, 500, "Internal server error"),

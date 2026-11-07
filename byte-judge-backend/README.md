@@ -18,7 +18,7 @@ Java 21 / Maven 3.9.15；Spring Boot 4.0.9、Cloud 2025.1.4、Alibaba 2025.1.0.0
 
 JDK 默认 C:\Develop\JDK\jdk21；可向 use-java21.ps1、start-services.ps1 传 -JdkPath。只改变当前进程环境，不改变系统 Java 17。init-local.ps1 自动生成并保留 .env.local 口令；其生成 SQL 位于被忽略的 .local/mysql-init，仅在空 MySQL 卷首次初始化执行。不要删除已有环境文件后复用旧卷，环境变量变化不会更改卷内账号口令。
 
-start-services.ps1 将变量注入六个子进程，使用 -Xmx256m；应用日志统一在后端根目录 log/，PID 保存在 .local/pids。IDE 启动需先在启动环境注入 .env.local 的变量（或在当前终端点加载 scripts/local-env.ps1）；Spring 不自动加载此文件。可用 SERVER_PORT、MANAGEMENT_PORT、SERVICE_IP 覆盖单实例配置。管理端口需独立配置，避免第二实例冲突。网关调用用户服务内部身份核验使用 `BYTE_JUDGE_INTERNAL_GATEWAY_CREDENTIAL`（至少 32 字符、无默认值）；init-local.ps1 会在 .env.local 中为缺失键生成随机值，非 local 环境必须由部署方注入。用户服务审计使用分配式雪花主键，`BYTE_JUDGE_AUDIT_WORKER_ID` / `BYTE_JUDGE_AUDIT_DATACENTER_ID` 无默认值必须提供；同一时刻运行的每个用户服务实例必须使用全局唯一的组合，冲突会生成重复主键。已有 .env.local 不会自动补齐新键，需重新运行 init-local.ps1。
+start-services.ps1 将变量注入六个子进程，使用 -Xmx256m；应用日志统一在后端根目录 log/，PID 保存在 .local/pids。IDE 启动需先在启动环境注入 .env.local 的变量（或在当前终端点加载 scripts/local-env.ps1）；Spring 不自动加载此文件。可用 SERVER_PORT、MANAGEMENT_PORT、SERVICE_IP 覆盖单实例配置。管理端口需独立配置，避免第二实例冲突。网关调用用户服务内部身份核验使用 `BYTE_JUDGE_INTERNAL_GATEWAY_CREDENTIAL`（至少 32 字符、无默认值）；init-local.ps1 会在 .env.local 中为缺失键生成随机值，非 local 环境必须由部署方注入。用户服务审计使用分配式雪花主键，`BYTE_JUDGE_AUDIT_WORKER_ID` / `BYTE_JUDGE_AUDIT_DATACENTER_ID` 无默认值必须提供；同一时刻运行的每个用户服务实例必须使用全局唯一的组合，冲突会生成重复主键。已有 .env.local 不会自动补齐新键，需重新运行 init-local.ps1。题目服务使用独立的 `BYTE_JUDGE_INTERNAL_PROBLEM_CREDENTIAL` 向用户服务核验身份（双方同值，至少 32 字符），以及 `BYTE_JUDGE_PROBLEM_WORKER_ID` / `BYTE_JUDGE_PROBLEM_DATACENTER_ID`；雪花节点组合需与其他服务及实例全局区分。`BYTE_JUDGE_ARTIFACT_ROOT` 指向受保护测试数据卷，本地默认 `.local/artifacts`，不映射为静态资源。
 
 每个服务写入 log/<服务简称>/：application.log 为滚动应用日志（单文件 10MB，历史 7 天、归档总量最多 100MB），console.out.log / console.err.log 为脚本启动的控制台输出，access/ 为 Tomcat 访问日志，nacos/ 为 Nacos 客户端日志。构建和验收输出可重定向到 log/build/。log/ 整体被 Git 忽略，Tomcat 工作目录仍放 .local/runtime，历史日志保留在原目录。
 
@@ -33,9 +33,9 @@ start-services.ps1 将变量注入六个子进程，使用 -Xmx256m；应用日�
 | contest-model | 8084 | 9084/actuator/health |
 | judge-model | 8085 | 9085/actuator/health |
 
-本地所有 Java 和管理端口绑定 127.0.0.1。管理端口只暴露 health，无需鉴权且不显示细节；此为隔离本机开发约定。当前只交付认证与最小管理员权限，其他业务鉴权、生产部署和前端尚未实现，不能直接用于公开部署。judge 当前没有消费者或执行器，保持不接任务。
+本地所有 Java 和管理端口绑定 127.0.0.1。管理端口只暴露 health，无需鉴权且不显示细节；此为隔离本机开发约定。当前交付认证、最小管理员权限与题目草稿/测试数据登记；其他业务鉴权、生产部署和前端尚未实现，不能直接用于公开部署。judge 当前没有消费者或执行器，保持不接任务。
 
-基础设施：MySQL 3306、Redis 16379（避开本机已有 6379，可通过 REDIS_PORT 覆盖）、RabbitMQ 5672 / 管理 15672；Nacos API 8848、gRPC 9848、控制台 [本地控制台](http://127.0.0.1:8088/)。全部仅绑定回环。四个数据库 bj_user/problem/submission/contest 对应同名账号，口令分别独立；网关与 judge 无业务库账号。Nacos 使用 standalone + Derby，本地关闭鉴权。六服务使用注册发现；网关和用户服务另通过 `spring.config.import` 导入必需的 Nacos Config，启动前按上面的独立步骤导入模板。环境、Data ID、Group、日志与故障恢复说明见 [Nacos 配置与运行材料](infra/nacos/README.md)。
+基础设施：MySQL 3306、Redis 16379（避开本机已有 6379，可通过 REDIS_PORT 覆盖）、RabbitMQ 5672 / 管理 15672；Nacos API 8848、gRPC 9848、控制台 [本地控制台](http://127.0.0.1:8088/)。全部仅绑定回环。四个数据库 bj_user/problem/submission/contest 对应同名账号，口令分别独立；网关与 judge 无业务库账号。Nacos 使用 standalone + Derby，本地关闭鉴权。六服务使用注册发现；网关、用户和题目服务另通过 `spring.config.import` 导入必需的 Nacos Config，启动前按上面的独立步骤导入模板。环境、Data ID、Group、日志与故障恢复说明见 [Nacos 配置与运行材料](infra/nacos/README.md)。
 
 ## 验证口径
 
@@ -49,10 +49,10 @@ smoke-test.ps1 失败抛错并返回非零。验证六服务 UP 和 Nacos 健康
 
 1. **Java 21 与构建**：`. ./scripts/use-java21.ps1` 后执行 `./mvnw.cmd clean package`；通过标准是全部 reactor 模块 SUCCESS 且测试通过。
 2. **基础设施**：`./scripts/start-infra.ps1`（首次由 `init-local.ps1` 生成 `.env.local`）；通过标准是四个容器 healthy。
-3. **Nacos 配置导入**：`. ./scripts/local-env.ps1` 后执行 `./scripts/import-nacos-config.ps1`；通过标准是三个 Data ID 逐字读回。服务启动不会代替导入。
-4. **数据库迁移**：用户服务启动时执行 Flyway `V1`～`V3`。不得清库或改为 baseline；已有库数据必须保留。
+3. **Nacos 配置导入**：`. ./scripts/local-env.ps1` 后执行 `./scripts/import-nacos-config.ps1`；通过标准是四个 Data ID 逐字读回。服务启动不会代替导入。
+4. **数据库迁移**：用户服务启动时执行 Flyway `V1`～`V3`，题目服务执行 `V1`～`V4`。不得清库或改为 baseline；已有库数据必须保留。
 5. **管理员初始化**：`java -jar ... --create-admin` 交互输入账户、密码与确认密码，成功退出码为 0 并输出 `ADMIN_CREATED`；不要把密码放进命令行、脚本或历史。
-6. **启动服务**：`./scripts/start-services.ps1`；网关和用户服务从 Nacos 读取必需配置并完成健康注册。
+6. **启动服务**：`./scripts/start-services.ps1`；网关、用户和题目服务从 Nacos 读取必需配置并完成健康注册。
 7. **底座冒烟**：`./scripts/smoke-test.ps1`，覆盖健康、注册、四库账号、Redis/RabbitMQ 与四条路由的下游证据；单独 404 或 Actuator UP 不算业务验收。
 8. **认证业务验收**：按[认证接口](docs/auth-api.md#powershell-调用)执行 GET CSRF 并保存 Cookie → 登录（提交 CSRF 头）→ `GET /users/me` → `GET /admin/users/me` → 退出。登录与退出后旧 CSRF 失效，必须重新获取；失败时读取统一响应中的 `code` 与 `requestId`。
 9. **故障与恢复**：按[依赖故障与恢复](docs/auth-api.md#依赖故障与恢复)在隔离环境暂停 Redis/MySQL 或停止用户实例，确认返回 503 且不建立身份；恢复后重新获取 CSRF 并完成合法流程。不要删除本地卷。
@@ -60,19 +60,20 @@ smoke-test.ps1 失败抛错并返回非零。验证六服务 UP 和 Nacos 健康
 
 权限、限频、跨实例、闲置、并发撤销和故障场景的自动化入口与已执行结果记录在下方各任务记录；构建、连接验证、底座冒烟与认证验收分别记录，未执行项会注明原因。
 
-当前依赖按服务声明，根 POM 只管理版本与构建规则，两个聚合层保持纯 POM；common-core 保持无框架依赖的普通 JAR，common-web 承载 MVC / Security / Session / 日志适配且只被网关与用户服务依赖。Spring Boot 父工程管理编译、测试、打包插件及其生态依赖版本；Cloud、Alibaba、MyBatis-Plus 分别使用 BOM。Enforcer 检查 Java 21、Maven 3.9+，阻止 Boot2/3 MyBatis-Plus starter、WebFlux starter 和可执行服务模块间的代码依赖。
+当前依赖按服务声明，根 POM 只管理版本与构建规则，两个聚合层保持纯 POM；common-core 保持无框架依赖的普通 JAR，common-web 承载 MVC / Security / Session / 日志适配，由网关、用户服务及已启用受保护接口的题目服务显式依赖。Spring Boot 父工程管理编译、测试、打包插件及其生态依赖版本；Cloud、Alibaba、MyBatis-Plus 分别使用 BOM。Enforcer 检查 Java 21、Maven 3.9+，阻止 Boot2/3 MyBatis-Plus starter、WebFlux starter 和可执行服务模块间的代码依赖。
 
 | 模块 | 主要依赖 |
 | --- | --- |
 | gateway | Gateway MVC、Actuator、Nacos Discovery + Config、LoadBalancer、Caffeine |
 | user / problem / submission / contest | MVC、Validation、RestClient、Actuator、Nacos Discovery、LoadBalancer、Caffeine、MyBatis-Plus Boot4、MySQL、Flyway、Redis、AMQP |
 | user 额外 | Spring Security Crypto + Bouncy Castle，实现 Argon2id 管理员密码摘要；Nacos Config；Testcontainers MySQL/Redis/Nacos 为 test scope |
+| problem 额外 | common-web 共享会话 / Security 适配、Nacos Config；受保护文件卷与草稿迁移 |
 | judge | MVC、Validation、RestClient、Actuator、Nacos Discovery、LoadBalancer、Caffeine、AMQP；无 MySQL / Redis / Session 依赖 |
 | 六个启动模块测试 | Spring Boot Test、MVC Test，均为 test scope |
 
 MyBatis-Plus 固定 3.5.18，在根 POM 通过 mybatis-plus.version 和 BOM 管理，依据 [官方 Boot4 安装说明](https://baomidou.com/en/getting-started/install/)；分页解析插件仅在需要时由子模块显式引用，版本由同一 BOM 管理。MySQL Connector/J 固定 9.7.0，在根 POM 显式设置 mysql.version，由继承的 Spring Boot dependencyManagement 使用该属性统一管理。四个数据 owner 按需声明这两项依赖，网关、judge 和 common-core 不引入。MySQL 驱动、Flyway MySQL 扩展和 Caffeine 使用 runtime scope。
 
-四个数据 owner 的 application-local.yml 配置所属库、独立账号、最大 5 连接池；Redis / RabbitMQ 口令来自环境变量。新增 starter 已参与健康检查。用户服务已有正式账户迁移，local 下启用 Flyway；另外三个数据 owner 尚无业务迁移，仍保持原配置。非 local 环境需提供自己的连接与迁移配置，不能以清库或自动 baseline 绕过已有结构核对。
+四个数据 owner 的 application-local.yml 配置所属库、独立账号、最大 5 连接池；Redis / RabbitMQ 口令来自环境变量。新增 starter 已参与健康检查。用户服务已有正式账户迁移，题目服务新增题目、草稿、测试数据清单与审计迁移，二者 local 下启用 Flyway；提交与竞赛服务尚无业务迁移，仍保持原配置。非 local 环境需提供自己的连接与迁移配置，不能以清库或自动 baseline 绕过已有结构核对。
 
 ## 管理员受控初始化
 
@@ -86,9 +87,22 @@ MyBatis-Plus 固定 3.5.18，在根 POM 通过 mybatis-plus.version 和 BOM 管�
 
 认证请求日志由 common-web 的基础过滤器生成请求标识（非入口只接受合法格式的下游标识），写入响应头与 MDC，HTTP 完成日志包含请求 ID、方法、路径、状态和耗时，不含查询、请求体、Cookie 或凭据；入口总是重建 ID，下游仅接受一个长度 1～64 的字母/数字/下划线/短横线 ID。MVC 与 Security 错误出口都输出统一 `code/data/message/requestId/serverTime` 结构并保留真实 HTTP 状态。
 
-通用 MVC 异常通过继承 `common-web` 的 `CommonErrorAdvice` 接入，由网关与用户服务自己的 `@RestControllerAdvice` 承载，避免多个全局 Advice 的执行顺序影响业务错误。公共模块集中维护请求体解析、参数类型、404/405/415/500 的映射，并供最外层 `ContractErrorFilter` 复用；业务认证、429 与 `Retry-After`、上游状态及依赖异常仍由各自入口处理。公共异常日志统一为 `request failed requestId=... error=... type=...`（4xx WARN、5xx ERROR），不记录异常消息或堆栈。Filter 保留响应已提交时重抛、原始 I/O 失败重抛，以及故障时清除部分成功响应与 Cookie、恢复关联头的行为。公共模块的 HTTP 契约与过滤链测试可单独运行 `./mvnw.cmd -B -pl byte-judge-commons/common-web -am test`，完整回归仍使用 `./mvnw.cmd -B clean package`。
+通用 MVC 异常通过继承 `common-web` 的 `CommonErrorAdvice` 接入，由网关、用户与题目服务自己的 `@RestControllerAdvice` 承载，避免多个全局 Advice 的执行顺序影响业务错误。公共模块集中维护请求体解析、参数类型、404/405/415/500 的映射，并供最外层 `ContractErrorFilter` 复用；业务认证、429 与 `Retry-After`、上游状态及依赖异常仍由各自入口处理。公共异常日志统一为 `request failed requestId=... error=... type=...`（4xx WARN、5xx ERROR），不记录异常消息或堆栈。Filter 保留响应已提交时重抛、原始 I/O 失败重抛，以及故障时清除部分成功响应与 Cookie、恢复关联头的行为。公共模块的 HTTP 契约与过滤链测试可单独运行 `./mvnw.cmd -B -pl byte-judge-commons/common-web -am test`，完整回归仍使用 `./mvnw.cmd -B clean package`。
 
-Spring Security Web 与 Spring Session 的适配集中在 `common-web`，由网关和用户服务显式 `@Import`；Nacos Config 已为认证链路装配，Sentinel 仍待对应规则切片接入。starter 存在不能代表 Outbox、消息消费或迁移已实现。P-01 完整验证、其他原型与 AT 验收仍按架构文档执行，双 submission / judge 演练随后进行。
+Spring Security Web 与 Spring Session 的适配集中在 `common-web`，由网关、用户和题目服务显式 `@Import`；Nacos Config 已为认证链路装配，Sentinel 仍待对应规则切片接入。starter 存在不能代表 Outbox、消息消费或迁移已实现。P-01 完整验证、其他原型与 AT 验收仍按架构文档执行，双 submission / judge 演练随后进行。
+
+## 题目草稿与测试数据登记
+
+规格 002 的管理接口由题目服务持有，协议与字段见 [题目草稿接口](docs/problem-draft-api.md)：仅标题创建、永久题号、后台筛选与分页、完整字段 CAS 保存、未发布草稿逻辑删除，以及 SHA-256 寻址的测试数据登记。该切片不提供版本、发布或判题能力。网关与题目服务分别执行身份核验；题目服务通过自己的内部凭据调用用户服务，不读取用户库。成功管理写与审计在同一数据库事务中提交，详情预览另记管理访问审计。
+
+真实 HTTP 测试复用用户服务测试夹具，以独立 JVM 启动网关、用户与题目服务，并使用临时 MySQL / Redis / Nacos 和独立题目库、受保护文件目录。完整 `clean package` 先打包题目服务，再运行用户服务中的 `ProblemDraftFlowTest`，无需预留旧制品。单独执行该套件时先准备制品：
+
+```powershell
+./mvnw.cmd -B -pl byte-judge-gateway,byte-judge-models/byte-judge-problem-model -am package -DskipTests
+./mvnw.cmd -B -pl byte-judge-models/byte-judge-user-model -am test -Dtest=ProblemDraftFlowTest -Dsurefire.failIfNoSpecifiedTests=false
+```
+
+文件每项最多 1 MiB，允许空内容；同一数据槽位重复登记明确拒绝，不同槽位可复用同一内容对象。样例与隐藏数据合计最多 20 组，草稿可先登记输入或输出的一侧。文件先在事务外完成摘要核验与原子落盘，清单、草稿修订与成功审计再事务提交；失败后无引用对象暂不自动回收，题目库与文件卷需一起备份。实际验证结果见下方运行证据。
 
 ## 停止与恢复
 
@@ -195,3 +209,11 @@ Java 21.0.11、Maven Wrapper 3.9.15 下执行 `mvnw.cmd -B clean package`：11 �
 2026-11-06，严格请求体解析收敛：登录请求体与内部身份核验请求体重复的严格 JsonMapper 规则（拒绝未知字段、重复键、尾随内容、标量强转）集中为用户服务内唯一定义 `user.auth.interfaces.http.StrictJson`，两个协议记录各自补充字段级校验后经它解析；CLI 管理员命令的凭据 JSON 是不同契约（手工校验精确键集、错误分类不同），不并入。聚焦验证 Java 21.0.11 下执行 `mvnw.cmd -B -pl byte-judge-models/byte-judge-user-model -am test`，common-web 18 项与用户服务 119 项全部通过（0 failure、0 error、0 skipped），新增 `StrictJsonTest` 5 项覆盖两个协议体的合法解析、登录 12 种与核验 13 种严格性违规及字段长度边界。输出位于 `log/build/strict-json-focused.log`。
 
 全量构建经历两次环境原因的中断后复跑通过：第一次 `clean package` 在 user-model 测试阶段被运行环境因系统内存不足中止（`log/build/strict-json-full-package.log`，已完成的公共模块 18 项与网关 10 项零失败）；第二次在 `SessionContractTest` 启动 Nacos 容器时撞上临时端口占用 `Bind for 0.0.0.0:33268 failed: port is already allocated`（前次中止构建的容器残留，随后自行释放；该类之外 117 项零失败，`log/build/strict-json-full-package2.log`），两者均不计为构建结果。第三次复跑：Java 21.0.11、Maven Wrapper 3.9.15 下，11 个 reactor 项全部 SUCCESS，147 项测试全部通过（0 failure、0 error、0 skipped，15 分 42 秒）：公共模块 18 项、网关 10 项、用户服务 119 项。既有真实 HTTP 认证、跨实例会话、依赖故障与错误出口矩阵、Nacos 运行时、会话契约回归均通过；测试使用独立临时容器。完整输出位于 `log/build/strict-json-full-package3.log`。本次未重启已有本地六服务或复跑 `scripts/smoke-test.ps1`（注册、端口与路由未变），未执行生产部署或性能验证。
+
+2026-11-07，规格 002 / 任务 #15～#19：题目草稿管理与测试数据登记切片。Java 21.0.11、Maven Wrapper 3.9.15 下，在后端根目录执行 `./mvnw.cmd -V -B clean package`：11 个 reactor 项全部 SUCCESS，**218 项测试全部通过**（0 failure、0 error、0 skipped），总耗时 17 分 13 秒。公共模块 18 项、网关 10 项、题目服务 57 项、用户服务 133 项；新增题目真实 HTTP 验收 11 项（99.21 秒），既有认证 HTTP 32 项、跨实例会话 9 项、依赖故障 5 项、Nacos 运行时 5 项与会话契约 2 项继续通过。完整输出位于 `log/build/problem-draft-full-package.log`；此前新增功能聚焦构建 71 项通过，输出位于 `log/build/problem-draft-focused-package.log`。
+
+`ProblemDraftFlowTest` 经真实网关访问独立题目与用户服务 JVM，使用临时 MySQL 8.4.13、Redis 7.4.12、Nacos v3.3.0，执行题目 V1～V4 迁移。覆盖标题创建与 Unicode 边界、永久题号、完整字段保存与严格 JSON、无变更保存递增、CAS 冲突回显、100 KiB UTF-8/标签/资源边界、标题与难度筛选/分页/已删除可见性、删除幂等与题号不复用；文件覆盖 SHA-256 回执、零字节、1 MiB 边界、重复槽位拒绝、跨槽位摘要复用及合计 20 组上限。权限覆盖游客、普通用户、管理员、伪造头、CSRF、直连题目服务、账户状态与 authEpoch 变化，并检查审计事实及日志不含题面/文件正文和凭据。测试不依赖另一可执行服务模块的 Java 类。
+
+同次对现有本地 Compose 基础设施启动六个新构建 JAR（`-Xmx256m`），发布并逐字读回四份 Nacos 模板；题目服务在现有所属库成功应用 V1～V4，无清库或删除卷。执行 `scripts/smoke-test.ps1` 的实际检查正文，退出码 0：六服务健康与健康注册、四库所属账号和 12 组跨库拒绝、Redis PING 与 RabbitMQ 管理 API 认证、四条网关路由的下游 404 及唯一探针访问记录、公共路由白名单、网关/用户/题目三服务配置契约与日志标识，以及网关到用户的请求关联全部通过。当前 PowerShell 执行策略限制脚本文件启动，本次通过临时 Node 辅助程序内联 `local-env.ps1` 并用 `ScriptBlock` 执行原检查正文，未改变执行策略；首轮辅助程序文本拼接错误在检查开始前失败，修正辅助程序后重跑通过，不计作应用失败或通过证据。输出分别位于 `log/build/problem-draft-local-start.log`、`problem-draft-local-smoke-first.log`、`problem-draft-local-smoke.log`。结束后仅停止本次启动的六个 Java 进程，保留基础设施、数据库及迁移结果，清理输出为 `problem-draft-local-stop.log`。烟测末行的 Business/shared session 未验证仅指该底座脚本自身；业务与会话证据见上述独立 HTTP 测试。
+
+未验证/未实现：题目版本、发布/下架、校验执行、判题、C 端查询与前端、生产部署、检索/吞吐性能、多实例雪花节点部署演练、文件卷备份恢复与自动垃圾回收。事务失败后无引用对象及异常残留临时文件暂时保留；本切片不运行自动清理。构建、基础设施冒烟与业务 HTTP 验收各自提供独立证据，不替代这些未验证边界。

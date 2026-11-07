@@ -185,8 +185,13 @@ public class WebSecurityConfiguration {
 
     @Bean
     InternalCallGuard internalCallGuard(
-            @Value("${byte-judge.internal.gateway-credential}") String gatewayCredential) {
-        return new InternalCallGuard(gatewayCredential);
+            @Value("${byte-judge.internal.gateway-credential}") String gatewayCredential,
+            @Value("${byte-judge.internal.problem-credential}") String problemCredential) {
+        // One high-entropy credential per caller service; the problem service presents its own
+        // identity when verifying protected requests for its routes. Keys match the
+        // X-Internal-Service header values the callers send.
+        return new InternalCallGuard(java.util.Map.of("gateway", gatewayCredential,
+                "problem", problemCredential));
     }
 
     @Bean

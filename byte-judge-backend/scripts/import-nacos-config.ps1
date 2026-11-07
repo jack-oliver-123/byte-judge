@@ -24,8 +24,8 @@ $headers = @{}
 $headers[$env:NACOS_AUTH_IDENTITY_KEY] = $env:NACOS_AUTH_IDENTITY_VALUE
 $base = $server.GetLeftPart([UriPartial]::Authority)
 
-# Publish only the three reviewed templates, not arbitrary YAML files in this directory.
-foreach ($dataId in @('byte-judge-common.yml', 'byte-judge-gateway.yml', 'byte-judge-user-model.yml')) {
+# Publish only the reviewed templates, not arbitrary YAML files in this directory.
+foreach ($dataId in @('byte-judge-common.yml', 'byte-judge-gateway.yml', 'byte-judge-user-model.yml', 'byte-judge-problem-model.yml')) {
     $file = Join-Path $ConfigDir $dataId
     if (!(Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing Nacos template: $dataId" }
     $content = [IO.File]::ReadAllText($file, [Text.Encoding]::UTF8)
@@ -63,4 +63,4 @@ foreach ($dataId in @('byte-judge-common.yml', 'byte-judge-gateway.yml', 'byte-j
     $byteCount = [Text.Encoding]::UTF8.GetByteCount($content)
     Write-Host "IMPORTED $dataId group=$Group namespace=$NamespaceId bytes=$byteCount"
 }
-Write-Host 'Nacos configuration import and read-back passed. Restart gateway and user service to apply changes.'
+Write-Host 'Nacos configuration import and read-back passed. Restart gateway, user and problem services to apply changes.'

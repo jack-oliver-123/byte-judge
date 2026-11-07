@@ -3,12 +3,38 @@ spring:
     name: byte-judge-problem-model
   profiles:
     default: local
+  config:
+    # Required values are validated in ProblemSecurityConfiguration/WebProtocolConfiguration.
+    # The shared session contract file keeps timeout, repository type and namespace identical to
+    # the gateway and user service; credentials stay in the controlled environment.
+    import:
+      - "classpath:byte-judge-session.yml"
+      - "nacos:byte-judge-common.yml?refreshEnabled=false"
+      - "nacos:byte-judge-problem-model.yml?refreshEnabled=false"
   cloud:
     nacos:
+      config:
+        server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
+        namespace: ${NACOS_CONFIG_NAMESPACE:}
+        group: ${NACOS_CONFIG_GROUP:BYTE_JUDGE}
       discovery:
         server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
-        group: BYTE_JUDGE
+        namespace: ${NACOS_DISCOVERY_NAMESPACE:}
+        group: ${NACOS_DISCOVERY_GROUP:BYTE_JUDGE}
         ip: ${SERVICE_IP:127.0.0.1}
+byte-judge:
+  problem:
+    # Snowflake identifiers must be unique across every deployed problem-service instance; there
+    # is deliberately no default so a missing deployment value fails closed instead of colliding.
+    worker-id: ${BYTE_JUDGE_PROBLEM_WORKER_ID}
+    datacenter-id: ${BYTE_JUDGE_PROBLEM_DATACENTER_ID}
+  identity:
+    # Credential this service presents on private verification calls to the user service.
+    problem-credential: ${BYTE_JUDGE_INTERNAL_PROBLEM_CREDENTIAL}
+  storage:
+    # Root of the protected volume for test-case artifacts. Content is addressed by digest below
+    # this directory; the path never appears in an API response.
+    artifact-root: ${BYTE_JUDGE_ARTIFACT_ROOT:.local/artifacts}
 server:
   port: ${SERVER_PORT:8082}
 logging:
