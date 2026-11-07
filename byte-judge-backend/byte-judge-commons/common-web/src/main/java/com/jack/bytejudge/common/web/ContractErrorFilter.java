@@ -5,18 +5,12 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
-import org.springframework.web.HttpMediaTypeNotSupportedException;
-import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.filter.OncePerRequestFilter;
-import org.springframework.web.servlet.NoHandlerFoundException;
-import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.io.IOException;
 
@@ -31,8 +25,6 @@ import java.io.IOException;
  * contract response so no caller can mistake a fault for a business result.
  */
 public final class ContractErrorFilter extends OncePerRequestFilter {
-    private static final Logger HTTP_LOG = LoggerFactory.getLogger("bytejudge.http");
-
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain chain) throws ServletException, IOException {
@@ -55,8 +47,7 @@ public final class ContractErrorFilter extends OncePerRequestFilter {
                 }
                 throw new ServletException(failure);
             }
-            HTTP_LOG.warn("request failed requestId={} type={}",
-                    RequestLogFilter.requestId(request), rootCause(failure).getClass().getName());
+            CommonErrors.log(error, request, rootCause(failure));
             write(request, response, error);
         }
     }
@@ -78,19 +69,10 @@ public final class ContractErrorFilter extends OncePerRequestFilter {
         if (cause instanceof AccessDeniedException) {
             return ApiError.ACCESS_DENIED;
         }
-        if (cause instanceof HttpRequestMethodNotSupportedException) {
-            return ApiError.METHOD_NOT_ALLOWED;
-        }
-        if (cause instanceof HttpMediaTypeNotSupportedException) {
-            return ApiError.UNSUPPORTED_MEDIA_TYPE;
-        }
-        if (cause instanceof NoResourceFoundException || cause instanceof NoHandlerFoundException) {
-            return ApiError.NOT_FOUND;
-        }
         if (cause instanceof IOException) {
             return null;
         }
-        return ApiError.INTERNAL_ERROR;
+        return CommonErrors.classify(cause);
     }
 
     private static void write(HttpServletRequest request, HttpServletResponse response, ApiError error)
