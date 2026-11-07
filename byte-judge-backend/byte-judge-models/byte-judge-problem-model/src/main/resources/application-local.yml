@@ -8,7 +8,7 @@ spring:
       minimum-idle: 1
       connection-timeout: 5000
   flyway:
-    enabled: false
+    enabled: true
   data:
     redis:
       host: ${REDIS_HOST:127.0.0.1}
@@ -22,6 +22,10 @@ spring:
     username: ${RABBITMQ_USER}
     password: ${RABBITMQ_PASSWORD}
     connection-timeout: 5s
+  servlet:
+    multipart:
+      max-file-size: 1MB
+      max-request-size: 8MB
 server:
   address: 127.0.0.1
   tomcat:

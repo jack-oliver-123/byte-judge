@@ -1,6 +1,6 @@
 # Nacos 配置、发现与认证链路
 
-本地使用 Nacos Server `v3.3.0`（standalone + Derby），数据保存在 Compose 命名卷。BOM 为 Spring Boot `4.0.9` / Cloud `2025.1.4` / Alibaba `2025.1.0.0`，实际客户端为 `3.1.1`。本切片只在网关和用户服务接入 Config，其他服务保留 Discovery。
+本地使用 Nacos Server `v3.3.0`（standalone + Derby），数据保存在 Compose 命名卷。BOM 为 Spring Boot `4.0.9` / Cloud `2025.1.4` / Alibaba `2025.1.0.0`，实际客户端为 `3.1.1`。网关、用户服务和题目服务接入 Config，其他服务保留 Discovery。
 
 本地 API `127.0.0.1:8848`、客户端 gRPC `9848`、控制台 <http://127.0.0.1:8088/>。gRPC 宿主端口必须等于 API 端口加 1000；代理和防火墙也须允许该端口。本地关闭客户端鉴权，端口仅绑定回环；管理 API 的身份检查仍独立生效。这一配置只用于宿主机 Java 服务的隔离开发环境。
 
@@ -8,11 +8,13 @@
 
 | Data ID | 导入者 | 内容与必需值 |
 | --- | --- | --- |
-| `byte-judge-common.yml` | gateway、user | 日志级别/模式；必需 `byte-judge.config.contract=auth-infra-v1` |
+| `byte-judge-common.yml` | gateway、user、problem | 日志级别/模式；必需 `byte-judge.config.contract=auth-infra-v1` |
 | `byte-judge-gateway.yml` | gateway | 必需 `byte-judge.web.ingress=true`；网关文件日志服务标记 |
 | `byte-judge-user-model.yml` | user | 必需 `byte-judge.web.ingress=false`；用户文件日志服务标记 |
 
-源文件位于 [config](config/)。两服务使用 `spring.config.import`，没有 bootstrap 配置，也没有 `optional:`。该版客户端遇到不存在的 Data ID 或部分连接故障可能只返回空属性源；应用因此显式校验公共契约及 ingress 值，不能只依赖 import 的写法证明启动失败。配置值由受控维护者管理，不接受浏览器输入。
+| `byte-judge-problem-model.yml` | problem | 必需 `byte-judge.web.ingress=false`；题目文件日志服务标记 |
+
+源文件位于 [config](config/)。三服务使用 `spring.config.import`，没有 bootstrap 配置，也没有 `optional:`。该版客户端遇到不存在的 Data ID 或部分连接故障可能只返回空属性源；应用因此显式校验公共契约及 ingress 值，不能只依赖 import 的写法证明启动失败。配置值由受控维护者管理，不接受浏览器输入。
 
 环境隔离建议使用不同 Namespace，Data ID 保持不变；Namespace 参数使用实际 ID，不能填显示名称。默认本地配置/发现均为 public，Group 均为 `BYTE_JUDGE`。可通过 `NACOS_CONFIG_NAMESPACE` / `NACOS_CONFIG_GROUP` 和 `NACOS_DISCOVERY_NAMESPACE` / `NACOS_DISCOVERY_GROUP` 分别选择。生产、测试使用独立环境及凭据；Namespace/Group 是组织边界，不能代替管理面权限与网络隔离。
 
@@ -32,7 +34,7 @@
 ./scripts/smoke-test.ps1
 ```
 
-导入是显式维护步骤，服务启动不会覆盖 Nacos 中的配置。再次执行导入会以当前模板更新这三个 Data ID，操作前核对目标 Namespace/Group 及环境；修改配置后重启网关和用户服务。所有导入均为 `refreshEnabled=false`，本切片不承诺通用动态刷新。
+导入是显式维护步骤，服务启动不会覆盖 Nacos 中的配置。再次执行导入会以当前模板更新这四个 Data ID，操作前核对目标 Namespace/Group 及环境；修改配置后重启网关、用户和题目服务。所有导入均为 `refreshEnabled=false`，本切片不承诺通用动态刷新。
 
 本地导入脚本通过 Nacos v3 管理 POST 写入、v3 客户端 GET 逐字读回校验，并对发布后的短暂可见性延迟做有界重试。成功只打印 Data ID、Group、Namespace 和 UTF-8 字节数；失败不转发服务端原始响应、配置正文或身份头。Group/Namespace 会进行 URL 编码。旧 v1 Config API 在目标镜像返回 404。
 

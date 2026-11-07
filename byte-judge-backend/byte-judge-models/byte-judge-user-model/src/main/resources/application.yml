@@ -1,8 +1,9 @@
 byte-judge:
   internal:
-    # Controlled service identity for the gateway's private identity verification call.
-    # Supplied by the environment; there is deliberately no insecure default.
+    # Controlled service identities for private verification calls. One high-entropy credential
+    # per caller service (gateway, problem); supplied by the environment, no insecure default.
     gateway-credential: ${BYTE_JUDGE_INTERNAL_GATEWAY_CREDENTIAL}
+    problem-credential: ${BYTE_JUDGE_INTERNAL_PROBLEM_CREDENTIAL}
   auth:
     rate-limit:
       window: 15m

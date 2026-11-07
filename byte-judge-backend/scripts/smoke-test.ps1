@@ -18,7 +18,7 @@ try {
         $service = if ($name -eq 'gateway') { 'byte-judge-gateway' } else { "byte-judge-$name-model" }
         $group = 'BYTE_JUDGE'
         $namespace = 'public'
-        if ($name -in @('gateway', 'user')) {
+        if ($name -in @('gateway', 'user', 'problem')) {
             if ($env:NACOS_DISCOVERY_GROUP) { $group = $env:NACOS_DISCOVERY_GROUP }
             if ($env:NACOS_DISCOVERY_NAMESPACE) { $namespace = $env:NACOS_DISCOVERY_NAMESPACE }
         }
@@ -73,6 +73,9 @@ try {
     foreach ($check in @(
             @('gateway', 'request correlation configured ingress=true'),
             @('user', 'request correlation configured ingress=false'),
+            @('problem', 'request correlation configured ingress=false'),
+            @('problem', '[service=problem]'),
+            @('problem', 'configContract=auth-infra-v1'),
             @('gateway', '[service=gateway]'),
             @('user', '[service=user]'),
             @('gateway', 'configContract=auth-infra-v1'),

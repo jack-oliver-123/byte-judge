@@ -1,0 +1,15 @@
+# Problem-service-specific non-sensitive runtime configuration.
+#
+# Data ID: byte-judge-problem-model.yml
+# Group:   BYTE_JUDGE (override with NACOS_CONFIG_GROUP)
+#
+# `ingress: false` means the gateway is the only public entry point. A well-formed
+# X-Request-ID supplied by the gateway is accepted and kept for correlation; anything else
+# is replaced with a generated id. The value has no local default, so a missing document
+# stops startup instead of silently trusting clients.
+byte-judge:
+  web:
+    ingress: false
+logging:
+  pattern:
+    file: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] [service=problem] [requestId=%X{requestId:-none}] %logger{36} - %msg%n"

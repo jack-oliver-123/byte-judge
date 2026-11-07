@@ -4,31 +4,45 @@ import jakarta.servlet.http.HttpServletRequest;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.Map;
 
 /**
- * Requires the dedicated gateway service identity on internal calls. A browser session, an
- * {@code X-User-*} header or a role from the public API never satisfies this check. The credential
- * is supplied by the controlled environment and is never logged or echoed.
+ * Requires a dedicated internal service identity on internal calls. A browser session, an
+ * {@code X-User-*} header or a role from the public API never satisfies this check. Each caller
+ * service has its own high-entropy credential from the controlled environment; the map is fixed
+ * at startup and credentials are never logged or echoed.
  */
 public final class InternalCallGuard {
     static final String CALLER_HEADER = "X-Internal-Service";
     static final String CREDENTIAL_HEADER = "X-Internal-Credential";
-    private static final String GATEWAY = "gateway";
 
-    private final byte[] expectedCredential;
+    private final Map<String, byte[]> expectedCredentials;
 
-    public InternalCallGuard(String credential) {
-        if (credential == null || credential.length() < 32) {
+    public InternalCallGuard(Map<String, String> credentialsByCaller) {
+        if (credentialsByCaller == null || credentialsByCaller.isEmpty()) {
             throw new IllegalStateException(
-                    "byte-judge.internal.gateway-credential must be at least 32 characters.");
+                    "At least one internal caller credential must be configured.");
         }
-        this.expectedCredential = credential.getBytes(StandardCharsets.UTF_8);
+        this.expectedCredentials = credentialsByCaller.entrySet().stream()
+                .collect(java.util.stream.Collectors.toUnmodifiableMap(Map.Entry::getKey, entry -> {
+                    String credential = entry.getValue();
+                    if (credential == null || credential.length() < 32) {
+                        throw new IllegalStateException(
+                                "The internal credential for caller '" + entry.getKey()
+                                        + "' must be at least 32 characters.");
+                    }
+                    return credential.getBytes(StandardCharsets.UTF_8);
+                }));
     }
 
     public boolean accepts(HttpServletRequest request) {
         String caller = request.getHeader(CALLER_HEADER);
+        if (caller == null) {
+            return false;
+        }
+        byte[] expected = expectedCredentials.get(caller);
         String supplied = request.getHeader(CREDENTIAL_HEADER);
-        return GATEWAY.equals(caller) && supplied != null
-                && MessageDigest.isEqual(expectedCredential, supplied.getBytes(StandardCharsets.UTF_8));
+        return expected != null && supplied != null
+                && MessageDigest.isEqual(expected, supplied.getBytes(StandardCharsets.UTF_8));
     }
 }
