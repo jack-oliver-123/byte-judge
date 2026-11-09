@@ -1,8 +1,7 @@
 package com.jack.bytejudge.problem.artifact.infrastructure.persistence.mapper;
 
-import com.jack.bytejudge.problem.artifact.domain.model.ArtifactKind;
-import com.jack.bytejudge.problem.artifact.domain.model.ArtifactManifest;
-import com.jack.bytejudge.problem.artifact.domain.model.ProblemArtifact;
+import com.jack.bytejudge.problem.artifact.infrastructure.persistence.entity.ArtifactManifestEntity;
+import com.jack.bytejudge.problem.artifact.infrastructure.persistence.entity.ProblemArtifactEntity;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -10,6 +9,11 @@ import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
 
+/**
+ * Manifest persistence. Stored kinds and family grouping mirror the domain enum; the database
+ * cannot call {@code ArtifactKind}, so the CASE expressions repeat the SAMPLE/HIDDEN split that
+ * {@code ArtifactKind.family()} defines. V3's check constraint keeps the stored names aligned.
+ */
 @Mapper
 public interface ProblemArtifactMapper {
 
@@ -17,7 +21,7 @@ public interface ProblemArtifactMapper {
             SELECT COUNT(*) FROM problem_artifact
             WHERE draftId = #{draftId} AND kind = #{kind} AND caseOrder = #{caseOrder} AND isDelete = 0
             """)
-    int countLiveSlot(@Param("draftId") long draftId, @Param("kind") ArtifactKind kind,
+    int countLiveSlot(@Param("draftId") long draftId, @Param("kind") String kind,
                       @Param("caseOrder") int caseOrder);
 
     /**
@@ -57,7 +61,7 @@ public interface ProblemArtifactMapper {
                  #{artifact.byteSize}, #{artifact.fileName}, #{artifact.kind},
                  #{artifact.caseOrder}, #{artifact.displayOrder})
             """)
-    int insert(@Param("artifact") ProblemArtifact artifact);
+    int insert(@Param("artifact") ProblemArtifactEntity artifact);
 
     /**
      * Ordered by kind first so the four test-data groups stay together in the detail view; the
@@ -69,5 +73,5 @@ public interface ProblemArtifactMapper {
             WHERE problemId = #{problemId} AND isDelete = 0
             ORDER BY kind, caseOrder, displayOrder, id
             """)
-    List<ArtifactManifest> findLiveByProblemId(@Param("problemId") long problemId);
+    List<ArtifactManifestEntity> findLiveByProblemId(@Param("problemId") long problemId);
 }

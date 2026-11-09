@@ -20,7 +20,8 @@ public interface ArtifactManifestRepository {
     /** Distinct (sample|hidden, caseOrder) groups among live manifests of the draft. */
     int countLiveGroups(long draftId);
 
-    void insert(ProblemArtifact artifact);
+    /** Inserts a manifest and returns the identifier assigned by the adapter. */
+    long insert(ProblemArtifact artifact);
 
     List<ArtifactManifest> findLiveByProblemId(long problemId);
 }

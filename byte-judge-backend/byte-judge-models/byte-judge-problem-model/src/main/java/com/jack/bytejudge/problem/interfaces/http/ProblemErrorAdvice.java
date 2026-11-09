@@ -1,4 +1,4 @@
-package com.jack.bytejudge.problem.artifact.interfaces.http;
+package com.jack.bytejudge.problem.interfaces.http;
 
 import com.jack.bytejudge.common.core.response.ApiError;
 import com.jack.bytejudge.common.core.response.ApiResponse;

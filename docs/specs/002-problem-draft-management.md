@@ -5,7 +5,7 @@
 | 规格版本 / 日期 | V1.0(已确认)/ 2026-11-07 |
 | 对应需求 | FR-11(部分:草稿生命周期)、FR-12(部分:测试数据录入与存储)、BR-05(字段与资源边界) |
 | 明确不做 | 版本创建、发布/下架/删除、发布校验执行、C 端检索与详情、判题接入 |
-| 状态 | 已实现草稿与测试数据登记切片；父任务 #15，子任务 #16～#19；交付 [PR #20](https://github.com/jack-oliver-123/byte-judge/pull/20) 待审；218 项全量测试及六服务冒烟通过，见[实测记录](../../byte-judge-backend/README.md) |
+| 状态 | 已实现草稿与测试数据登记切片；父任务 #15，子任务 #16～#19；交付 [PR #20](https://github.com/jack-oliver-123/byte-judge/pull/20) 待审；全量构建、真实网关 HTTP 与六服务冒烟通过（含规格审查修复后复跑），见[实测记录](../../byte-judge-backend/README.md) |
 
 ## Problem Statement
 

@@ -3,7 +3,7 @@ package com.jack.bytejudge.problem.admin.interfaces.http;
 import com.jack.bytejudge.common.core.security.SessionIdentity;
 import com.jack.bytejudge.problem.admin.application.port.IdentityVerifier;
 import com.jack.bytejudge.problem.admin.domain.IdentityAccessDeniedException;
-import com.jack.bytejudge.problem.admin.domain.model.ProblemAuditEntry;
+import com.jack.bytejudge.problem.audit.domain.model.ProblemAuditEntry;
 import com.jack.bytejudge.problem.admin.domain.model.VerifiedIdentity;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;

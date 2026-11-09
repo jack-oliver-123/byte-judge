@@ -6,12 +6,10 @@ import com.jack.bytejudge.common.web.ProtectedPaths;
 import com.jack.bytejudge.common.web.RequestLogFilter;
 import com.jack.bytejudge.common.web.SecurityErrorWriter;
 import com.jack.bytejudge.problem.admin.application.port.IdentityVerifier;
-import com.jack.bytejudge.problem.admin.application.port.ProblemAudit;
 import com.jack.bytejudge.problem.admin.domain.IdentityAccessDeniedException;
 import com.jack.bytejudge.problem.admin.domain.model.VerifiedIdentity;
-import com.jack.bytejudge.problem.admin.domain.model.ProblemAuditEntry;
-import com.jack.bytejudge.problem.admin.domain.model.ProblemAuditEvent;
-import com.jack.bytejudge.problem.admin.domain.model.ProblemAuditOutcome;
+import com.jack.bytejudge.problem.audit.application.port.ProblemAudit;
+import com.jack.bytejudge.problem.audit.domain.model.ProblemAuditEntry;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -71,8 +69,8 @@ public final class IdentityRevalidationFilter extends OncePerRequestFilter {
         try {
             verified = verifier.verify(session.getId(), ProtectedPaths.routingPath(request), requestId);
         } catch (IdentityAccessDeniedException denied) {
-            audit.record(new ProblemAuditEntry(ProblemAuditEvent.ADMIN_ACCESS, ProblemAuditOutcome.DENIED,
-                    identity.userId(), identity.account(), "ROLE", null, requestId));
+            audit.record(ProblemAuditEntry.adminAccessDenied(identity.userId(), identity.account(),
+                    "ROLE", requestId));
             SecurityErrorWriter.writeError(request, response, ApiError.ACCESS_DENIED);
             return;
         } catch (RuntimeException unavailable) {
@@ -82,9 +80,8 @@ public final class IdentityRevalidationFilter extends OncePerRequestFilter {
         }
         if (verified.isEmpty()) {
             invalidate(session);
-            audit.record(new ProblemAuditEntry(ProblemAuditEvent.ADMIN_ACCESS,
-                    ProblemAuditOutcome.REJECTED, identity.userId(), identity.account(),
-                    "SESSION", null, requestId));
+            audit.record(ProblemAuditEntry.adminAccessRejected(identity.userId(),
+                    identity.account(), "SESSION", requestId));
             SecurityErrorWriter.writeError(request, response, ApiError.NOT_AUTHENTICATED);
             return;
         }
@@ -105,8 +102,8 @@ public final class IdentityRevalidationFilter extends OncePerRequestFilter {
             chain.doFilter(request, response);
             return;
         }
-        audit.record(new ProblemAuditEntry(ProblemAuditEvent.ADMIN_ACCESS, ProblemAuditOutcome.DENIED,
-                current.userId(), current.account(), "ROLE", null, requestId));
+        audit.record(ProblemAuditEntry.adminAccessDenied(current.userId(), current.account(),
+                "ROLE", requestId));
         SecurityErrorWriter.writeError(request, response, ApiError.ACCESS_DENIED);
     }
 

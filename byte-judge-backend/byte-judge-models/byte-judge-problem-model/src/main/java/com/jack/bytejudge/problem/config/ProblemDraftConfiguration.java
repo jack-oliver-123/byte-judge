@@ -2,21 +2,22 @@ package com.jack.bytejudge.problem.config;
 
 import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
 import com.jack.bytejudge.problem.admin.application.DraftService;
-import com.jack.bytejudge.problem.admin.application.port.ProblemAudit;
 import com.jack.bytejudge.problem.admin.domain.repository.ProblemDraftRepository;
 import com.jack.bytejudge.problem.admin.infrastructure.persistence.mapper.ProblemDraftMapper;
 import com.jack.bytejudge.problem.admin.infrastructure.persistence.mapper.ProblemMapper;
 import com.jack.bytejudge.problem.admin.infrastructure.persistence.repository.MybatisProblemDraftRepository;
 import com.jack.bytejudge.problem.artifact.application.ArtifactCatalog;
+import com.jack.bytejudge.problem.audit.application.port.ProblemAudit;
+import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Assembly for the draft lifecycle. Mapper scanning is owned by
- * {@link ProblemSecurityConfiguration} for the shared admin persistence package, so this class
- * only binds the domain port and the use case.
+ * Assembly for the draft lifecycle. The admin persistence package is scanned here so the audit
+ * and artifact features can keep their own disjoint mapper packages.
  */
 @Configuration(proxyBeanMethods = false)
+@MapperScan(basePackageClasses = ProblemMapper.class)
 public class ProblemDraftConfiguration {
 
     @Bean

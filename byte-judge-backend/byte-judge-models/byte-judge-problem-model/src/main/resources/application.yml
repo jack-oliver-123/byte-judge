@@ -4,7 +4,7 @@ spring:
   profiles:
     default: local
   config:
-    # Required values are validated in ProblemSecurityConfiguration/WebProtocolConfiguration.
+    # Required values are validated in ProblemIdentifierConfiguration/WebProtocolConfiguration.
     # The shared session contract file keeps timeout, repository type and namespace identical to
     # the gateway and user service; credentials stay in the controlled environment.
     import:

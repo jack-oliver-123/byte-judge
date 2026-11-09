@@ -4,7 +4,6 @@ import com.jack.bytejudge.problem.admin.application.result.CreatedProblem;
 import com.jack.bytejudge.problem.admin.application.result.DeletedProblem;
 import com.jack.bytejudge.problem.admin.application.result.ProblemDetail;
 import com.jack.bytejudge.problem.admin.application.result.ProblemPage;
-import com.jack.bytejudge.problem.admin.application.port.ProblemAudit;
 import com.jack.bytejudge.problem.admin.domain.DraftValidationException;
 import com.jack.bytejudge.problem.admin.domain.ProblemNotDeletableException;
 import com.jack.bytejudge.problem.admin.domain.ProblemNotFoundException;
@@ -13,12 +12,11 @@ import com.jack.bytejudge.problem.admin.domain.model.DraftContent;
 import com.jack.bytejudge.problem.admin.domain.model.ProblemDetailRecord;
 import com.jack.bytejudge.problem.admin.domain.model.ProblemDraft;
 import com.jack.bytejudge.problem.admin.domain.model.ProblemStatus;
-import com.jack.bytejudge.problem.admin.domain.model.ProblemAuditEntry;
-import com.jack.bytejudge.problem.admin.domain.model.ProblemAuditEvent;
-import com.jack.bytejudge.problem.admin.domain.model.ProblemAuditOutcome;
 import com.jack.bytejudge.problem.admin.domain.repository.ProblemDraftRepository;
 import com.jack.bytejudge.problem.artifact.application.ArtifactCatalog;
 import com.jack.bytejudge.problem.artifact.application.port.DraftArtifactSeam;
+import com.jack.bytejudge.problem.audit.application.port.ProblemAudit;
+import com.jack.bytejudge.problem.audit.domain.model.ProblemAuditEntry;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -54,8 +52,8 @@ public class DraftService implements DraftArtifactSeam {
         long problemId = drafts.insertProblem(problemNo, actor.userId());
         long draftId = drafts.insertDraft(problemId, content, actor.userId());
         drafts.attachDraft(problemId, draftId);
-        audit.record(new ProblemAuditEntry(ProblemAuditEvent.PROBLEM_CREATE,
-                ProblemAuditOutcome.SUCCESS, actor.userId(), actor.account(), null, problemId, requestId));
+        audit.record(ProblemAuditEntry.problemCreated(actor.userId(), actor.account(), problemId,
+                requestId));
         return new CreatedProblem(problemId, problemNo, draftId, 0);
     }
 
@@ -66,7 +64,7 @@ public class DraftService implements DraftArtifactSeam {
             throw new DraftValidationException("Invalid pagination parameters.");
         }
         Difficulty difficulty = Difficulty.parse(difficultyText);
-        String title = LikePattern.contains(titleContains);
+        String title = LikePattern.containsPattern(titleContains);
         long offset = ((long) pageNum - 1) * pageSize;
         long total = drafts.count(title, difficulty, includeDeleted);
         List<com.jack.bytejudge.problem.admin.domain.model.ProblemListItem> items = total == 0
@@ -81,10 +79,8 @@ public class DraftService implements DraftArtifactSeam {
      */
     @Transactional
     public ProblemDetail detail(long problemId, AdminActor actor, String requestId) {
-        ProblemDetail detail = toDetail(
-                requireLive(drafts.findDetail(problemId).orElseThrow(ProblemNotFoundException::new)));
-        audit.record(new ProblemAuditEntry(ProblemAuditEvent.ADMIN_ACCESS,
-                ProblemAuditOutcome.SUCCESS, actor.userId(), actor.account(), "PREVIEW", problemId,
+        ProblemDetail detail = toDetail(liveDetail(problemId));
+        audit.record(ProblemAuditEntry.adminPreview(actor.userId(), actor.account(), problemId,
                 requestId));
         return detail;
     }
@@ -103,12 +99,11 @@ public class DraftService implements DraftArtifactSeam {
         boolean updated = drafts.updateDraft(problemId, current.draft().id(), expectedRevision,
                 content, actor.userId());
         if (!updated) {
-            throw new DraftVersionConflictException(
-                    toDetail(requireLive(drafts.findDetail(problemId).orElseThrow(ProblemNotFoundException::new))));
+            throw new DraftVersionConflictException(toDetail(liveDetail(problemId)));
         }
-        audit.record(new ProblemAuditEntry(ProblemAuditEvent.PROBLEM_UPDATE,
-                ProblemAuditOutcome.SUCCESS, actor.userId(), actor.account(), null, problemId, requestId));
-        return toDetail(requireLive(drafts.findDetail(problemId).orElseThrow(ProblemNotFoundException::new)));
+        audit.record(ProblemAuditEntry.problemUpdated(actor.userId(), actor.account(), problemId,
+                requestId));
+        return toDetail(liveDetail(problemId));
     }
 
     /**
@@ -142,14 +137,14 @@ public class DraftService implements DraftArtifactSeam {
             }
             throw new DraftVersionConflictException(toDetail(reread));
         }
-        audit.record(new ProblemAuditEntry(ProblemAuditEvent.PROBLEM_DELETE,
-                ProblemAuditOutcome.SUCCESS, actor.userId(), actor.account(), null, problemId, requestId));
+        audit.record(ProblemAuditEntry.problemDeleted(actor.userId(), actor.account(), problemId,
+                requestId));
         return new DeletedProblem(problemId, current.problemNo(), current.draft().revision());
     }
 
     @Override
     @Transactional(propagation = Propagation.MANDATORY)
-    public LockedDraft lockForArtifact(long problemId, long expectedRevision) {
+    public long lockForArtifact(long problemId, long expectedRevision) {
         ProblemDraftRepository.LockedDraft locked = drafts.lockLiveDraft(problemId);
         if (locked == null) {
             throw new DraftNotFoundException();
@@ -157,8 +152,7 @@ public class DraftService implements DraftArtifactSeam {
         if (locked.revision() != expectedRevision) {
             throw new RevisionConflictException();
         }
-        return new LockedDraft(locked.draftId(), locked.problemId(), locked.revision(),
-                locked.createdById());
+        return locked.draftId();
     }
 
     @Override
@@ -174,6 +168,10 @@ public class DraftService implements DraftArtifactSeam {
             throw new ProblemNotFoundException();
         }
         return current;
+    }
+
+    private ProblemDetailRecord liveDetail(long problemId) {
+        return requireLive(drafts.findDetail(problemId).orElseThrow(ProblemNotFoundException::new));
     }
 
     private ProblemDetailRecord requireLive(ProblemDetailRecord current) {

@@ -8,6 +8,10 @@ import com.jack.bytejudge.problem.admin.domain.model.ProblemDraft;
 import com.jack.bytejudge.problem.admin.domain.model.ProblemListItem;
 import com.jack.bytejudge.problem.admin.domain.model.ProblemStatus;
 import com.jack.bytejudge.problem.admin.domain.repository.ProblemDraftRepository;
+import com.jack.bytejudge.problem.admin.infrastructure.persistence.entity.LockedDraftRow;
+import com.jack.bytejudge.problem.admin.infrastructure.persistence.entity.ProblemDetailRow;
+import com.jack.bytejudge.problem.admin.infrastructure.persistence.entity.ProblemDraftContentEntity;
+import com.jack.bytejudge.problem.admin.infrastructure.persistence.entity.ProblemListItemRow;
 import com.jack.bytejudge.problem.admin.infrastructure.persistence.mapper.ProblemDraftMapper;
 import com.jack.bytejudge.problem.admin.infrastructure.persistence.mapper.ProblemMapper;
 import tools.jackson.core.type.TypeReference;
@@ -58,8 +62,7 @@ public final class MybatisProblemDraftRepository implements ProblemDraftReposito
     @Override
     public long insertDraft(long problemId, DraftContent content, long createdById) {
         long id = identifiers.nextId(content).longValue();
-        drafts.insert(id, problemId, content, difficultyColumn(content), tagsJson(content.tags()),
-                createdById);
+        drafts.insert(id, problemId, contentEntity(content), createdById);
         return id;
     }
 
@@ -83,8 +86,8 @@ public final class MybatisProblemDraftRepository implements ProblemDraftReposito
     @Override
     public boolean updateDraft(long problemId, long draftId, long expectedRevision,
                                DraftContent content, long updatedById) {
-        int rows = drafts.updateContent(problemId, draftId, expectedRevision, content,
-                difficultyColumn(content), tagsJson(content.tags()), updatedById);
+        int rows = drafts.updateContent(problemId, draftId, expectedRevision, contentEntity(content),
+                updatedById);
         if (rows == 1) {
             problems.touch(problemId);
         }
@@ -119,12 +122,12 @@ public final class MybatisProblemDraftRepository implements ProblemDraftReposito
 
     @Override
     public LockedDraft lockLiveDraft(long problemId) {
-        ProblemMapper.LockedDraftRow row = problems.lockLiveDraft(problemId);
+        LockedDraftRow row = problems.lockLiveDraft(problemId);
         return row == null ? null
                 : new LockedDraft(row.draftId(), row.problemId(), row.revision(), row.createdById());
     }
 
-    private ProblemDetailRecord toDetail(ProblemMapper.ProblemDetailRow row) {
+    private ProblemDetailRecord toDetail(ProblemDetailRow row) {
         DraftContent content = new DraftContent(row.title(), row.statement(), row.inputDescription(),
                 row.outputDescription(), parseDifficulty(row.difficulty()), parseTags(row.tags()),
                 row.timeLimitCpuMs(), row.timeLimitWallMs(), row.memoryLimitMiB());
@@ -138,10 +141,17 @@ public final class MybatisProblemDraftRepository implements ProblemDraftReposito
                 instant(row.createdAt()), draft, deleted);
     }
 
-    private ProblemListItem toListItem(ProblemMapper.ProblemListItemRow row) {
+    private ProblemListItem toListItem(ProblemListItemRow row) {
         return new ProblemListItem(row.problemId(), row.problemNo(), row.title(),
                 parseDifficulty(row.difficulty()), ProblemStatus.fromColumn(row.status()),
                 row.revision(), instant(row.createdAt()), instant(row.updatedAt()));
+    }
+
+    private static ProblemDraftContentEntity contentEntity(DraftContent content) {
+        return new ProblemDraftContentEntity(content.title(), content.statement(),
+                content.inputDescription(), content.outputDescription(), difficultyColumn(content),
+                tagsJson(content.tags()), content.timeLimitCpuMs(), content.timeLimitWallMs(),
+                content.memoryLimitMiB());
     }
 
     private static String difficultyColumn(DraftContent content) {

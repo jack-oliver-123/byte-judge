@@ -1,12 +1,14 @@
 package com.jack.bytejudge.problem.admin.infrastructure.persistence.mapper;
 
+import com.jack.bytejudge.problem.admin.infrastructure.persistence.entity.LockedDraftRow;
+import com.jack.bytejudge.problem.admin.infrastructure.persistence.entity.ProblemDetailRow;
+import com.jack.bytejudge.problem.admin.infrastructure.persistence.entity.ProblemListItemRow;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -42,82 +44,20 @@ public interface ProblemMapper {
             """)
     int markDeleted(@Param("problemId") long problemId);
 
-    @Select("""
-            SELECT p.id AS problemId, p.problemNo, p.status, p.everPublished, p.createdById,
-                   p.isDelete AS problemDeleted, p.createdAt AS createdAt,
-                   d.id AS draftId, d.problemId AS draftProblemId, d.revision,
-                   d.title, d.statement, d.inputDescription, d.outputDescription, d.difficulty,
-                   d.tags, d.timeLimitCpuMs, d.timeLimitWallMs, d.memoryLimitMiB,
-                   d.isDelete AS draftDeleted, d.createdById AS draftCreatedById,
-                   d.updatedById AS draftUpdatedById, d.createdAt AS draftCreatedAt,
-                   d.updatedAt AS updatedAt
-            FROM problem p
-            JOIN problem_draft d ON d.problemId = p.id
-            WHERE p.id = #{problemId}
-            """)
+    @Select(ProblemSql.DETAIL)
     ProblemDetailRow findDetail(@Param("problemId") long problemId);
 
-    @Select("""
-            SELECT p.id AS problemId, p.problemNo, p.status, p.everPublished, p.createdById,
-                   p.isDelete AS problemDeleted, p.createdAt AS createdAt,
-                   d.id AS draftId, d.problemId AS draftProblemId, d.revision,
-                   d.title, d.statement, d.inputDescription, d.outputDescription, d.difficulty,
-                   d.tags, d.timeLimitCpuMs, d.timeLimitWallMs, d.memoryLimitMiB,
-                   d.isDelete AS draftDeleted, d.createdById AS draftCreatedById,
-                   d.updatedById AS draftUpdatedById, d.createdAt AS draftCreatedAt,
-                   d.updatedAt AS updatedAt
-            FROM problem p
-            JOIN problem_draft d ON d.problemId = p.id
-            WHERE p.id = #{problemId}
-            FOR UPDATE
-            """)
+    @Select(ProblemSql.LOCKED_DETAIL)
     ProblemDetailRow lockDetail(@Param("problemId") long problemId);
 
-    @Select("""
-            <script>
-            SELECT p.id AS problemId, p.problemNo, d.title, d.difficulty, p.status, d.revision,
-                   p.createdAt AS createdAt, d.updatedAt AS updatedAt
-            FROM problem p
-            JOIN problem_draft d ON d.problemId = p.id
-            <where>
-              <if test="includeDeleted == false">
-                AND p.isDelete = 0 AND d.isDelete = 0 AND p.status = 'DRAFT'
-              </if>
-              <if test="title != null">
-                AND d.title LIKE #{title} ESCAPE '!'
-              </if>
-              <if test="difficulty != null">
-                AND d.difficulty = #{difficulty}
-              </if>
-            </where>
-            ORDER BY p.createdAt DESC, p.problemNo DESC
-            LIMIT #{limit} OFFSET #{offset}
-            </script>
-            """)
+    @Select(ProblemSql.LIST_PAGE)
     List<ProblemListItemRow> findPage(@Param("title") String title,
                                       @Param("difficulty") String difficulty,
                                       @Param("includeDeleted") boolean includeDeleted,
                                       @Param("offset") long offset,
                                       @Param("limit") int limit);
 
-    @Select("""
-            <script>
-            SELECT COUNT(*)
-            FROM problem p
-            JOIN problem_draft d ON d.problemId = p.id
-            <where>
-              <if test="includeDeleted == false">
-                AND p.isDelete = 0 AND d.isDelete = 0 AND p.status = 'DRAFT'
-              </if>
-              <if test="title != null">
-                AND d.title LIKE #{title} ESCAPE '!'
-              </if>
-              <if test="difficulty != null">
-                AND d.difficulty = #{difficulty}
-              </if>
-            </where>
-            </script>
-            """)
+    @Select(ProblemSql.LIST_COUNT)
     long count(@Param("title") String title,
                @Param("difficulty") String difficulty,
                @Param("includeDeleted") boolean includeDeleted);
@@ -134,22 +74,4 @@ public interface ProblemMapper {
             FOR UPDATE
             """)
     LockedDraftRow lockLiveDraft(@Param("problemId") long problemId);
-
-    record ProblemDetailRow(long problemId, int problemNo, String status, boolean everPublished,
-                            long createdById, boolean problemDeleted, LocalDateTime createdAt,
-                            long draftId, long draftProblemId, long revision, String title,
-                            String statement, String inputDescription, String outputDescription,
-                            String difficulty, String tags, Integer timeLimitCpuMs,
-                            Integer timeLimitWallMs, Integer memoryLimitMiB,
-                            boolean draftDeleted, long draftCreatedById, long draftUpdatedById,
-                            LocalDateTime draftCreatedAt, LocalDateTime updatedAt) {
-    }
-
-    record ProblemListItemRow(long problemId, int problemNo, String title, String difficulty,
-                              String status, long revision, LocalDateTime createdAt,
-                              LocalDateTime updatedAt) {
-    }
-
-    record LockedDraftRow(long draftId, long problemId, long revision, long createdById) {
-    }
 }

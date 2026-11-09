@@ -1,7 +1,6 @@
 package com.jack.bytejudge.problem.config;
 
 import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
-import com.jack.bytejudge.problem.admin.application.port.ProblemAudit;
 import com.jack.bytejudge.problem.artifact.application.ArtifactCatalog;
 import com.jack.bytejudge.problem.artifact.application.ArtifactRegistrationService;
 import com.jack.bytejudge.problem.artifact.application.port.ArtifactStore;
@@ -11,6 +10,7 @@ import com.jack.bytejudge.problem.artifact.domain.repository.ArtifactManifestRep
 import com.jack.bytejudge.problem.artifact.infrastructure.persistence.SpringArtifactUnitOfWork;
 import com.jack.bytejudge.problem.artifact.infrastructure.persistence.mapper.ProblemArtifactMapper;
 import com.jack.bytejudge.problem.artifact.infrastructure.persistence.repository.MybatisArtifactManifestRepository;
+import com.jack.bytejudge.problem.audit.application.port.ProblemAudit;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -23,8 +23,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class ArtifactConfiguration {
 
     @Bean
-    ArtifactManifestRepository artifactManifestRepository(ProblemArtifactMapper mapper) {
-        return new MybatisArtifactManifestRepository(mapper);
+    ArtifactManifestRepository artifactManifestRepository(ProblemArtifactMapper mapper,
+                                                          IdentifierGenerator identifiers) {
+        return new MybatisArtifactManifestRepository(mapper, identifiers);
     }
 
     @Bean
@@ -36,9 +37,8 @@ public class ArtifactConfiguration {
     ArtifactRegistrationService artifactRegistrationService(ArtifactStore store,
                                                             ArtifactManifestRepository manifests,
                                                             DraftArtifactSeam drafts, ProblemAudit audit,
-                                                            IdentifierGenerator identifiers,
                                                             ArtifactUnitOfWork unitOfWork) {
-        return new ArtifactRegistrationService(store, manifests, drafts, audit, identifiers, unitOfWork);
+        return new ArtifactRegistrationService(store, manifests, drafts, audit, unitOfWork);
     }
 
     @Bean

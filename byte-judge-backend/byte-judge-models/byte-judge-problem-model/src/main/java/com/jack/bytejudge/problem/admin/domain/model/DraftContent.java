@@ -4,7 +4,6 @@ import com.jack.bytejudge.problem.admin.domain.DraftValidationException;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Objects;
 
 /**
  * The frozen editable field set of one problem draft (spec 002 D3). Construction always applies
@@ -125,15 +124,5 @@ public record DraftContent(String title, String statement, String inputDescripti
         if (memoryMiB != null && (memoryMiB < MEMORY_MIN_MIB || memoryMiB > MEMORY_MAX_MIB)) {
             throw new DraftValidationException("Memory limit is out of range.");
         }
-    }
-
-    public DraftContent withTitle(String replacement) {
-        return of(replacement, statement, inputDescription, outputDescription, difficulty, tags,
-                timeLimitCpuMs, timeLimitWallMs, memoryLimitMiB);
-    }
-
-    /** Exposed for rule tests; also keeps null-safe comparisons explicit at call sites. */
-    public boolean sameContent(DraftContent other) {
-        return Objects.equals(this, other);
     }
 }

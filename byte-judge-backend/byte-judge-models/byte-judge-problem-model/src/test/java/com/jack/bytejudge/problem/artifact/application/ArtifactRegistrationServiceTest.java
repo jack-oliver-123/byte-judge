@@ -1,10 +1,5 @@
 package com.jack.bytejudge.problem.artifact.application;
 
-import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
-import com.jack.bytejudge.problem.admin.application.port.ProblemAudit;
-import com.jack.bytejudge.problem.admin.domain.model.ProblemAuditEntry;
-import com.jack.bytejudge.problem.admin.domain.model.ProblemAuditEvent;
-import com.jack.bytejudge.problem.admin.domain.model.ProblemAuditOutcome;
 import com.jack.bytejudge.problem.artifact.application.command.UploadArtifactCommand;
 import com.jack.bytejudge.problem.artifact.application.port.ArtifactStore;
 import com.jack.bytejudge.problem.artifact.application.port.ArtifactUnitOfWork;
@@ -18,7 +13,10 @@ import com.jack.bytejudge.problem.artifact.domain.model.ArtifactKind;
 import com.jack.bytejudge.problem.artifact.domain.model.ArtifactManifest;
 import com.jack.bytejudge.problem.artifact.domain.model.ProblemArtifact;
 import com.jack.bytejudge.problem.artifact.domain.repository.ArtifactManifestRepository;
-import org.junit.jupiter.api.BeforeEach;
+import com.jack.bytejudge.problem.audit.application.port.ProblemAudit;
+import com.jack.bytejudge.problem.audit.domain.model.ProblemAuditEntry;
+import com.jack.bytejudge.problem.audit.domain.model.ProblemAuditEvent;
+import com.jack.bytejudge.problem.audit.domain.model.ProblemAuditOutcome;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
@@ -30,9 +28,6 @@ import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 class ArtifactRegistrationServiceTest {
     private static final byte[] CONTENT = "1 2\n".getBytes(StandardCharsets.UTF_8);
@@ -44,14 +39,8 @@ class ArtifactRegistrationServiceTest {
     private final FakeManifests manifests = new FakeManifests(events);
     private final FakeSeam drafts = new FakeSeam(events);
     private final RecordingAudit audit = new RecordingAudit(events);
-    private final IdentifierGenerator identifiers = mock(IdentifierGenerator.class);
     private final ArtifactRegistrationService service = new ArtifactRegistrationService(store,
-            manifests, drafts, audit, identifiers, unitOfWork);
-
-    @BeforeEach
-    void assignIdentifiers() {
-        when(identifiers.nextId(any())).thenReturn(42L);
-    }
+            manifests, drafts, audit, unitOfWork);
 
     @Test
     void storageRunsOutsideTheTransactionAndTheWriteOrderIsManifestRevisionAudit() {
@@ -258,9 +247,10 @@ class ArtifactRegistrationServiceTest {
         }
 
         @Override
-        public void insert(ProblemArtifact artifact) {
+        public long insert(ProblemArtifact artifact) {
             events.add("insert");
             inserted = artifact;
+            return 42L;
         }
 
         @Override
@@ -279,12 +269,12 @@ class ArtifactRegistrationServiceTest {
         }
 
         @Override
-        public LockedDraft lockForArtifact(long problemId, long expectedRevision) {
+        public long lockForArtifact(long problemId, long expectedRevision) {
             events.add("lock");
             if (lockFailure != null) {
                 throw lockFailure;
             }
-            return new LockedDraft(77L, problemId, expectedRevision, 5L);
+            return 77L;
         }
 
         @Override

@@ -8,10 +8,16 @@ import com.jack.bytejudge.problem.artifact.domain.InvalidArtifactException;
  * concerns and are deliberately not stored.
  */
 public enum ArtifactKind {
-    SAMPLE_INPUT,
-    SAMPLE_OUTPUT,
-    HIDDEN_INPUT,
-    HIDDEN_OUTPUT;
+    SAMPLE_INPUT(ArtifactFamily.SAMPLE),
+    SAMPLE_OUTPUT(ArtifactFamily.SAMPLE),
+    HIDDEN_INPUT(ArtifactFamily.HIDDEN),
+    HIDDEN_OUTPUT(ArtifactFamily.HIDDEN);
+
+    private final ArtifactFamily family;
+
+    ArtifactKind(ArtifactFamily family) {
+        this.family = family;
+    }
 
     public static ArtifactKind parse(String raw) {
         if (raw != null) {
@@ -25,7 +31,7 @@ public enum ArtifactKind {
     }
 
     /** Sample and hidden inputs/outputs count as one group pair for the FR-12 group cap. */
-    public boolean hidden() {
-        return this == HIDDEN_INPUT || this == HIDDEN_OUTPUT;
+    public ArtifactFamily family() {
+        return family;
     }
 }

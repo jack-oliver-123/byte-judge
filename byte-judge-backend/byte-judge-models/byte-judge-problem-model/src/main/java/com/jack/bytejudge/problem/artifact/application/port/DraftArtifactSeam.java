@@ -8,21 +8,19 @@ package com.jack.bytejudge.problem.artifact.application.port;
 public interface DraftArtifactSeam {
 
     /**
-     * Locks the live draft of the problem and verifies the revision the caller last read.
+     * Locks the live draft of the problem, verifies the revision the caller last read and returns
+     * the locked draft identifier.
      *
      * @throws DraftNotFoundException  when the problem or its draft is missing or deleted
      * @throws RevisionConflictException when {@code expectedRevision} no longer matches
      */
-    LockedDraft lockForArtifact(long problemId, long expectedRevision);
+    long lockForArtifact(long problemId, long expectedRevision);
 
     /**
      * Increments the revision from {@code expectedRevision}. Returns {@code false} when the row no
      * longer matches, which the caller treats as a version conflict.
      */
     boolean advanceRevision(long draftId, long expectedRevision);
-
-    record LockedDraft(long draftId, long problemId, long revision, long createdById) {
-    }
 
     final class DraftNotFoundException extends RuntimeException {
         public DraftNotFoundException() {

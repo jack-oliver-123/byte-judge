@@ -1,6 +1,5 @@
 package com.jack.bytejudge.problem.admin.application;
 
-import com.jack.bytejudge.problem.admin.application.port.ProblemAudit;
 import com.jack.bytejudge.problem.admin.application.result.CreatedProblem;
 import com.jack.bytejudge.problem.admin.application.result.DeletedProblem;
 import com.jack.bytejudge.problem.admin.application.result.ProblemDetail;
@@ -9,9 +8,6 @@ import com.jack.bytejudge.problem.admin.domain.DraftValidationException;
 import com.jack.bytejudge.problem.admin.domain.ProblemNotFoundException;
 import com.jack.bytejudge.problem.admin.domain.model.Difficulty;
 import com.jack.bytejudge.problem.admin.domain.model.DraftContent;
-import com.jack.bytejudge.problem.admin.domain.model.ProblemAuditEntry;
-import com.jack.bytejudge.problem.admin.domain.model.ProblemAuditEvent;
-import com.jack.bytejudge.problem.admin.domain.model.ProblemAuditOutcome;
 import com.jack.bytejudge.problem.admin.domain.model.ProblemDetailRecord;
 import com.jack.bytejudge.problem.admin.domain.model.ProblemDraft;
 import com.jack.bytejudge.problem.admin.domain.model.ProblemListItem;
@@ -23,6 +19,10 @@ import com.jack.bytejudge.problem.artifact.domain.model.ArtifactKind;
 import com.jack.bytejudge.problem.artifact.domain.model.ArtifactManifest;
 import com.jack.bytejudge.problem.artifact.domain.model.ProblemArtifact;
 import com.jack.bytejudge.problem.artifact.domain.repository.ArtifactManifestRepository;
+import com.jack.bytejudge.problem.audit.application.port.ProblemAudit;
+import com.jack.bytejudge.problem.audit.domain.model.ProblemAuditEntry;
+import com.jack.bytejudge.problem.audit.domain.model.ProblemAuditEvent;
+import com.jack.bytejudge.problem.audit.domain.model.ProblemAuditOutcome;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -169,8 +169,7 @@ class DraftServiceTest {
     void artifactLockRequiresTheCurrentRevisionAndALiveDraft() {
         repository.locked = new ProblemDraftRepository.LockedDraft(22L, 11L, 3L, 7L);
 
-        DraftArtifactSeam.LockedDraft locked = service.lockForArtifact(11L, 3L);
-        assertThat(locked).isEqualTo(new DraftArtifactSeam.LockedDraft(22L, 11L, 3L, 7L));
+        assertThat(service.lockForArtifact(11L, 3L)).isEqualTo(22L);
 
         assertThatThrownBy(() -> service.lockForArtifact(11L, 2L))
                 .isInstanceOf(DraftArtifactSeam.RevisionConflictException.class);
@@ -218,7 +217,7 @@ class DraftServiceTest {
             }
 
             @Override
-            public void insert(ProblemArtifact artifact) {
+            public long insert(ProblemArtifact artifact) {
                 throw new UnsupportedOperationException();
             }
 

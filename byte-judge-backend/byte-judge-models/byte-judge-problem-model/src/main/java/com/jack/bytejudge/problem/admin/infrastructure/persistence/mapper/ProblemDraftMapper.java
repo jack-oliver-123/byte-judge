@@ -1,5 +1,6 @@
 package com.jack.bytejudge.problem.admin.infrastructure.persistence.mapper;
 
+import com.jack.bytejudge.problem.admin.infrastructure.persistence.entity.ProblemDraftContentEntity;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -16,13 +17,12 @@ public interface ProblemDraftMapper {
                  isDelete, createdById, updatedById)
             VALUES
                 (#{id}, #{problemId}, 0, #{content.title}, #{content.statement},
-                 #{content.inputDescription}, #{content.outputDescription}, #{difficulty}, #{tags},
-                 #{content.timeLimitCpuMs}, #{content.timeLimitWallMs}, #{content.memoryLimitMiB},
-                 0, #{operatorId}, #{operatorId})
+                 #{content.inputDescription}, #{content.outputDescription}, #{content.difficulty},
+                 #{content.tags}, #{content.timeLimitCpuMs}, #{content.timeLimitWallMs},
+                 #{content.memoryLimitMiB}, 0, #{operatorId}, #{operatorId})
             """)
     int insert(@Param("id") long id, @Param("problemId") long problemId,
-               @Param("content") com.jack.bytejudge.problem.admin.domain.model.DraftContent content,
-               @Param("difficulty") String difficulty, @Param("tags") String tags,
+               @Param("content") ProblemDraftContentEntity content,
                @Param("operatorId") long operatorId);
 
     @Update("""
@@ -32,8 +32,8 @@ public interface ProblemDraftMapper {
                 statement = #{content.statement},
                 inputDescription = #{content.inputDescription},
                 outputDescription = #{content.outputDescription},
-                difficulty = #{difficulty},
-                tags = #{tags},
+                difficulty = #{content.difficulty},
+                tags = #{content.tags},
                 timeLimitCpuMs = #{content.timeLimitCpuMs},
                 timeLimitWallMs = #{content.timeLimitWallMs},
                 memoryLimitMiB = #{content.memoryLimitMiB},
@@ -46,8 +46,7 @@ public interface ProblemDraftMapper {
             """)
     int updateContent(@Param("problemId") long problemId, @Param("draftId") long draftId,
                       @Param("expectedRevision") long expectedRevision,
-                      @Param("content") com.jack.bytejudge.problem.admin.domain.model.DraftContent content,
-                      @Param("difficulty") String difficulty, @Param("tags") String tags,
+                      @Param("content") ProblemDraftContentEntity content,
                       @Param("operatorId") long operatorId);
 
     @Update("""

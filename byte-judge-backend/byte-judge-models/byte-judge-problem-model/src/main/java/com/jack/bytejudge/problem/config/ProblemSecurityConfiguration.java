@@ -1,18 +1,12 @@
 package com.jack.bytejudge.problem.config;
 
-import com.baomidou.mybatisplus.core.incrementer.DefaultIdentifierGenerator;
-import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
 import com.jack.bytejudge.common.core.response.ApiError;
 import com.jack.bytejudge.common.core.security.SessionIdentity;
 import com.jack.bytejudge.common.web.*;
 import com.jack.bytejudge.problem.admin.application.port.IdentityVerifier;
-import com.jack.bytejudge.problem.admin.application.port.ProblemAudit;
-import com.jack.bytejudge.problem.admin.domain.model.*;
-import com.jack.bytejudge.problem.admin.infrastructure.persistence.mapper.ProblemAuditMapper;
-import com.jack.bytejudge.problem.admin.infrastructure.persistence.repository.MybatisProblemAudit;
 import com.jack.bytejudge.problem.admin.interfaces.http.IdentityRevalidationFilter;
-import org.mybatis.spring.annotation.MapperScan;
-import org.springframework.beans.factory.annotation.Value;
+import com.jack.bytejudge.problem.audit.application.port.ProblemAudit;
+import com.jack.bytejudge.problem.audit.domain.model.ProblemAuditEntry;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
@@ -25,7 +19,6 @@ import org.springframework.security.web.csrf.*;
 
 @Configuration(proxyBeanMethods = false)
 @Import({SessionConfiguration.class, WebProtocolConfiguration.class})
-@MapperScan(basePackageClasses = ProblemAuditMapper.class)
 public class ProblemSecurityConfiguration {
     @Bean
     SecurityFilterChain problemSecurity(HttpSecurity http, CsrfTokenRepository csrfTokens,
@@ -42,9 +35,9 @@ public class ProblemSecurityConfiguration {
                                     .SecurityContextHolder.getContext().getAuthentication();
                             if (authentication != null && authentication.getPrincipal() instanceof SessionIdentity identity
                                     && ProtectedPaths.isAdministrative(ProtectedPaths.routingPath(request))) {
-                                audit.record(new ProblemAuditEntry(ProblemAuditEvent.ADMIN_ACCESS,
-                                        ProblemAuditOutcome.DENIED, identity.userId(), identity.account(),
-                                        failure instanceof CsrfException ? "CSRF" : "ROLE", null,
+                                audit.record(ProblemAuditEntry.adminAccessDenied(identity.userId(),
+                                        identity.account(),
+                                        failure instanceof CsrfException ? "CSRF" : "ROLE",
                                         RequestLogFilter.requestId(request)));
                             }
                             SecurityErrorWriter.writeError(request, response,
@@ -65,15 +58,4 @@ public class ProblemSecurityConfiguration {
 
     @Bean
     SecurityContextRepository securityContextRepository() { return new HttpSessionSecurityContextRepository(); }
-
-    @Bean
-    IdentifierGenerator problemIdentifiers(@Value("${byte-judge.problem.worker-id}") long workerId,
-                                           @Value("${byte-judge.problem.datacenter-id}") long datacenterId) {
-        return new DefaultIdentifierGenerator(workerId, datacenterId);
-    }
-
-    @Bean
-    ProblemAudit problemAudit(ProblemAuditMapper mapper, IdentifierGenerator identifiers) {
-        return new MybatisProblemAudit(mapper, identifiers);
-    }
 }

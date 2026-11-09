@@ -10,7 +10,7 @@ public final class LikePattern {
     }
 
     /** Returns a trimmed contains pattern, or {@code null} when no filter should be applied. */
-    public static String contains(String raw) {
+    public static String containsPattern(String raw) {
         if (raw == null || raw.isBlank()) {
             return null;
         }
