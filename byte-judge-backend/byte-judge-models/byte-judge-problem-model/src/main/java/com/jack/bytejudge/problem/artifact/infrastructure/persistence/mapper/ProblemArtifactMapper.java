@@ -11,11 +11,18 @@ import java.util.List;
 
 /**
  * Manifest persistence. Stored kinds and family grouping mirror the domain enum; the database
- * cannot call {@code ArtifactKind}, so the CASE expressions repeat the SAMPLE/HIDDEN split that
- * {@code ArtifactKind.family()} defines. V3's check constraint keeps the stored names aligned.
+ * cannot call {@code ArtifactKind}, so {@link #HIDDEN_OR_SAMPLE_FAMILY} encodes the SAMPLE/HIDDEN
+ * split that {@code ArtifactKind.family()} defines. V3's check constraint keeps the stored names
+ * aligned.
  */
 @Mapper
 public interface ProblemArtifactMapper {
+
+    /**
+     * Compile-time SQL fragment shared by the group queries; both must classify a kind identically.
+     */
+    String HIDDEN_OR_SAMPLE_FAMILY =
+            "CASE WHEN kind IN ('HIDDEN_INPUT', 'HIDDEN_OUTPUT') THEN 'HIDDEN' ELSE 'SAMPLE' END";
 
     @Select("""
             SELECT COUNT(*) FROM problem_artifact
@@ -31,17 +38,15 @@ public interface ProblemArtifactMapper {
     @Select("""
             SELECT COUNT(*) FROM problem_artifact
             WHERE draftId = #{draftId} AND caseOrder = #{caseOrder} AND isDelete = 0
-              AND (CASE WHEN kind IN ('HIDDEN_INPUT', 'HIDDEN_OUTPUT') THEN 'HIDDEN' ELSE 'SAMPLE' END)
-                  = #{family}
-            """)
+              AND (""" + HIDDEN_OR_SAMPLE_FAMILY + ") = #{family}")
     int countLiveGroup(@Param("draftId") long draftId, @Param("family") String family,
                        @Param("caseOrder") int caseOrder);
 
     @Select("""
             SELECT COUNT(*) FROM (
                 SELECT DISTINCT
-                    (CASE WHEN kind IN ('HIDDEN_INPUT', 'HIDDEN_OUTPUT') THEN 'HIDDEN' ELSE 'SAMPLE' END)
-                        AS family,
+                    (""" + HIDDEN_OR_SAMPLE_FAMILY + """
+                    ) AS family,
                     caseOrder
                 FROM problem_artifact
                 WHERE draftId = #{draftId} AND isDelete = 0

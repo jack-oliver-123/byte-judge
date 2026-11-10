@@ -1,5 +1,7 @@
 package com.jack.bytejudge.problem.admin.application;
 
+import com.jack.bytejudge.problem.admin.application.command.DeleteProblemCommand;
+import com.jack.bytejudge.problem.admin.application.command.SaveDraftCommand;
 import com.jack.bytejudge.problem.admin.application.result.CreatedProblem;
 import com.jack.bytejudge.problem.admin.application.result.DeletedProblem;
 import com.jack.bytejudge.problem.admin.application.result.ProblemDetail;
@@ -90,20 +92,19 @@ public class DraftService implements DraftArtifactSeam {
      * including a save whose content is unchanged.
      */
     @Transactional
-    public ProblemDetail save(long problemId, long expectedRevision, DraftContent content,
-                              AdminActor actor, String requestId) {
-        ProblemDetailRecord current = requireLiveLocked(problemId);
-        if (current.draft().revision() != expectedRevision) {
+    public ProblemDetail save(SaveDraftCommand command) {
+        ProblemDetailRecord current = requireLiveLocked(command.problemId());
+        if (current.draft().revision() != command.expectedRevision()) {
             throw new DraftVersionConflictException(toDetail(current));
         }
-        boolean updated = drafts.updateDraft(problemId, current.draft().id(), expectedRevision,
-                content, actor.userId());
+        boolean updated = drafts.updateDraft(command.problemId(), current.draft().id(),
+                command.expectedRevision(), command.content(), command.actor().userId());
         if (!updated) {
-            throw new DraftVersionConflictException(toDetail(liveDetail(problemId)));
+            throw new DraftVersionConflictException(toDetail(liveDetail(command.problemId())));
         }
-        audit.record(ProblemAuditEntry.problemUpdated(actor.userId(), actor.account(), problemId,
-                requestId));
-        return toDetail(liveDetail(problemId));
+        audit.record(ProblemAuditEntry.problemUpdated(command.actor().userId(),
+                command.actor().account(), command.problemId(), command.requestId()));
+        return toDetail(liveDetail(command.problemId()));
     }
 
     /**
@@ -112,8 +113,9 @@ public class DraftService implements DraftArtifactSeam {
      * deleted problem is reported as not found.
      */
     @Transactional
-    public DeletedProblem delete(long problemId, long expectedRevision, AdminActor actor,
-                                 String requestId) {
+    public DeletedProblem delete(DeleteProblemCommand command) {
+        long problemId = command.problemId();
+        long expectedRevision = command.expectedRevision();
         ProblemDetailRecord current = drafts.lockDetail(problemId)
                 .orElseThrow(ProblemNotFoundException::new);
         if (current.deleted()) {
@@ -128,7 +130,8 @@ public class DraftService implements DraftArtifactSeam {
         if (current.status() != ProblemStatus.DRAFT || current.everPublished()) {
             throw new ProblemNotDeletableException();
         }
-        boolean deleted = drafts.markDeleted(problemId, current.draft().id(), actor.userId());
+        boolean deleted = drafts.markDeleted(problemId, current.draft().id(),
+                command.actor().userId());
         if (!deleted) {
             ProblemDetailRecord reread = drafts.findDetail(problemId)
                     .orElseThrow(ProblemNotFoundException::new);
@@ -137,8 +140,8 @@ public class DraftService implements DraftArtifactSeam {
             }
             throw new DraftVersionConflictException(toDetail(reread));
         }
-        audit.record(ProblemAuditEntry.problemDeleted(actor.userId(), actor.account(), problemId,
-                requestId));
+        audit.record(ProblemAuditEntry.problemDeleted(command.actor().userId(),
+                command.actor().account(), problemId, command.requestId()));
         return new DeletedProblem(problemId, current.problemNo(), current.draft().revision());
     }
 

@@ -104,15 +104,24 @@ Session 使用 Spring Security 内置认证类型，身份主体是 common-core 
 
 登录时 Session 只保存最小身份快照：用户编号、规范化账户、角色和 `authEpoch`。对 `/api/v1/users/me`、`/api/v1/admin/**` 及 `/api/v1/me/**` 的每次受保护请求都会重新读取用户服务权威数据库中的当前角色、账户状态和 `authEpoch`；不使用延迟失效的正向缓存。账户被禁用、`authEpoch` 改变、角色或账户记录不再匹配时，当前会话立即失效并返回 401，恢复账户状态也不能复活旧会话；重新登录会使用新的权威值。权威存储无法完成核验时返回 503，受保护业务不会执行。
 
-网关在入口对上述路径执行一次独立核验：读取 `BJSESSION` 对应 Session，调用用户服务的内部身份接口；`/api/v1/admin/**` 还要求权威角色为 `admin`。用户服务在真正处理请求时再次核验，因此直连用户服务不能绕过 Session、CSRF、角色或状态检查。网关内部调用与实际浏览器身份无关，浏览器管理员 Session 不能授权内部接口。
+网关在入口对上述路径执行一次独立核验：读取 `BJSESSION` 对应 Session，调用用户服务的内部身份接口；`/api/v1/admin/**` 还要求权威角色为 `admin`。题目服务对自己持有的受保护路径（如 `/api/v1/admin/problems/**`）也用同一内部接口和独立凭据执行核验。用户服务在真正处理请求时再次核验，因此直连用户服务不能绕过 Session、CSRF、角色或状态检查。任何内部调用与实际浏览器身份无关，浏览器管理员 Session 不能授权内部接口。
 
 内部身份接口不属于公开 API，网关没有对应路由，公共入口遇到 `/internal/**` 直接返回 404：
 
 | 方法与路径 | 输入 | 成功 data |
 | --- | --- | --- |
-| POST `/internal/v1/identity/verify` | 请求头 `X-Internal-Service: gateway`、`X-Internal-Credential`；JSON 字段 `sessionId`、`path` | `userId`、`account`、`role` |
+| POST `/internal/v1/identity/verify` | 请求头 `X-Internal-Service`（`gateway` 或 `problem`）、`X-Internal-Credential`；JSON 字段 `sessionId`、`path` | `userId`、`account`、`role` |
 
-内部凭据由受控环境变量 `BYTE_JUDGE_INTERNAL_GATEWAY_CREDENTIAL` 提供给网关和用户服务，至少 32 字符，无默认值；缺失时服务拒绝启动。接口使用常量时间比较，只接受独立服务身份，不读取浏览器 Cookie 或身份头；成功响应仅包含上述三个白名单字段。无效凭据返回 403，未知或失效 Session 返回 401，权威角色不足管理路径返回 403。`local` 由 `.env.local` 生成本地随机值，其他环境必须由部署方注入。
+内部凭据按调用方分别配置：
+
+| 调用方 | `X-Internal-Service` | 受控环境变量 | 持有服务 |
+| --- | --- | --- | --- |
+| 网关 | `gateway` | `BYTE_JUDGE_INTERNAL_GATEWAY_CREDENTIAL` | 网关、用户服务 |
+| 题目服务 | `problem` | `BYTE_JUDGE_INTERNAL_PROBLEM_CREDENTIAL` | 题目服务、用户服务 |
+
+两项凭据均至少 32 字符、无默认值，只从环境变量或受控文件注入；`BYTE_JUDGE_INTERNAL_PROBLEM_CREDENTIAL` 在用户服务与题目服务中必须取同一值，部署时还须与网关凭据取不同值（实现只按 `X-Internal-Service` 选择对应凭据，不校验两项是否相同）。用户服务同时校验两项配置，任一项缺失或不足 32 字符时拒绝启动；题目服务在自身凭据缺失或不足 32 字符时同样拒绝启动。接口使用常量时间比较，只接受独立服务身份，不读取浏览器 Cookie 或身份头；成功响应仅包含上述三个白名单字段。无效凭据返回 403，未知或失效 Session 返回 401，权威角色不足管理路径返回 403。`local` 由 `.env.local` 生成本地随机值，其他环境必须由部署方注入。
+
+轮换需要同时更新上述两个持有服务的注入值并重启相应进程；当前实现每个调用方只接受一个当前值，凭据在启动时读取并绑定，不支持热更新、新旧值并行或多密钥兼容（04 §4.3 中“轮换期接受短期过渡版本”仍是设计目标，尚未实现）。轮换题目服务凭据时，在用户服务与题目服务都完成重启前，题目服务的受保护请求会因凭据不匹配返回 403，应安排在维护窗口或接受这段短暂拒绝；网关凭据同理，需同时更新网关与用户服务。
 
 用户服务持久保存认证/权限审计：登录成功与失败（含原因分类）、退出、保护请求的身份核验拒绝、管理权限拒绝和内部凭据拒绝。审计不记录密码、摘要、Session/CSRF 值或服务凭据，也不提供查询页面。`auth_audit` 使用分配式雪花主键（`BYTE_JUDGE_AUDIT_WORKER_ID` / `BYTE_JUDGE_AUDIT_DATACENTER_ID`，多实例必须唯一）、驼峰列名和 UTC `DATETIME(3)`。
 

@@ -5,6 +5,8 @@ import com.jack.bytejudge.common.core.security.SessionIdentity;
 import com.jack.bytejudge.common.web.RequestLogFilter;
 import com.jack.bytejudge.problem.admin.application.AdminActor;
 import com.jack.bytejudge.problem.admin.application.DraftService;
+import com.jack.bytejudge.problem.admin.application.command.DeleteProblemCommand;
+import com.jack.bytejudge.problem.admin.application.command.SaveDraftCommand;
 import com.jack.bytejudge.problem.admin.application.result.CreatedProblem;
 import com.jack.bytejudge.problem.admin.application.result.DeletedProblem;
 import com.jack.bytejudge.problem.admin.domain.AdminIdentityRequiredException;
@@ -83,9 +85,9 @@ public class AdminProblemController {
         if (body.expectedRevision() == null || body.expectedRevision() < 0) {
             throw new DraftValidationException("expectedRevision is required.");
         }
-        return ApiResponse.success(ProblemDetailView.from(drafts.save(parseId(id),
-                        body.expectedRevision(), body.toContent(), actor(identity),
-                        RequestLogFilter.requestId(request))),
+        return ApiResponse.success(ProblemDetailView.from(drafts.save(new SaveDraftCommand(
+                        parseId(id), body.expectedRevision(), body.toContent(), actor(identity),
+                        RequestLogFilter.requestId(request)))),
                 RequestLogFilter.requestId(request));
     }
 
@@ -94,8 +96,8 @@ public class AdminProblemController {
                                            @PathVariable String id,
                                            @RequestParam long expectedRevision,
                                            HttpServletRequest request) {
-        DeletedProblem deleted = drafts.delete(parseId(id), expectedRevision, actor(identity),
-                RequestLogFilter.requestId(request));
+        DeletedProblem deleted = drafts.delete(new DeleteProblemCommand(parseId(id),
+                expectedRevision, actor(identity), RequestLogFilter.requestId(request)));
         return ApiResponse.success(DeletedProblemView.from(deleted),
                 RequestLogFilter.requestId(request));
     }

@@ -1,5 +1,7 @@
 package com.jack.bytejudge.problem.admin.application;
 
+import com.jack.bytejudge.problem.admin.application.command.DeleteProblemCommand;
+import com.jack.bytejudge.problem.admin.application.command.SaveDraftCommand;
 import com.jack.bytejudge.problem.admin.application.result.CreatedProblem;
 import com.jack.bytejudge.problem.admin.application.result.DeletedProblem;
 import com.jack.bytejudge.problem.admin.application.result.ProblemDetail;
@@ -62,7 +64,8 @@ class DraftServiceTest {
     @Test
     void anAcceptedSaveAdvancesTheRevisionEvenWhenNothingChanged() {
         DraftContent unchanged = repository.detail.draft().content();
-        ProblemDetail saved = service.save(11L, 3L, unchanged, ACTOR, "request-2");
+        ProblemDetail saved = service.save(
+                new SaveDraftCommand(11L, 3L, unchanged, ACTOR, "request-2"));
 
         assertThat(saved.revision()).isEqualTo(4L);
         assertThat(saved.content()).isEqualTo(unchanged);
@@ -75,7 +78,8 @@ class DraftServiceTest {
     void aStaleSaveReturnsTheCurrentDraftAndDoesNotWrite() {
         DraftContent replacement = DraftContent.titleOnly("Overwrite");
 
-        assertThatThrownBy(() -> service.save(11L, 2L, replacement, ACTOR, "request-3"))
+        assertThatThrownBy(() -> service.save(
+                new SaveDraftCommand(11L, 2L, replacement, ACTOR, "request-3")))
                 .isInstanceOfSatisfying(DraftVersionConflictException.class, conflict -> {
                     assertThat(conflict.current().revision()).isEqualTo(3L);
                     assertThat(conflict.current().content().title()).isEqualTo("Two Sum");
@@ -89,7 +93,8 @@ class DraftServiceTest {
     void savingADeletedDraftIsNotFound() {
         repository.detail = detail(true);
 
-        assertThatThrownBy(() -> service.save(11L, 3L, DraftContent.titleOnly("x"), ACTOR, "r"))
+        assertThatThrownBy(() -> service.save(
+                new SaveDraftCommand(11L, 3L, DraftContent.titleOnly("x"), ACTOR, "r")))
                 .isInstanceOf(ProblemNotFoundException.class);
         assertThat(repository.updateCalls).isZero();
     }
@@ -110,13 +115,15 @@ class DraftServiceTest {
 
     @Test
     void deletionMarksTheDraftDeletedAndIsIdempotentForTheSameRevision() {
-        DeletedProblem deleted = service.delete(11L, 3L, ACTOR, "request-5");
+        DeletedProblem deleted = service.delete(
+                new DeleteProblemCommand(11L, 3L, ACTOR, "request-5"));
 
         assertThat(deleted).isEqualTo(new DeletedProblem(11L, 1000, 3L));
         assertThat(audit.entries).singleElement()
                 .extracting(ProblemAuditEntry::event).isEqualTo(ProblemAuditEvent.PROBLEM_DELETE);
 
-        DeletedProblem repeated = service.delete(11L, 3L, ACTOR, "request-6");
+        DeletedProblem repeated = service.delete(
+                new DeleteProblemCommand(11L, 3L, ACTOR, "request-6"));
         assertThat(repeated).isEqualTo(deleted);
         assertThat(audit.entries).hasSize(1);
     }
@@ -125,13 +132,15 @@ class DraftServiceTest {
     void aDeletedDraftWithAnotherRevisionIsNotFound() {
         repository.detail = detail(true);
 
-        assertThatThrownBy(() -> service.delete(11L, 2L, ACTOR, "r"))
+        assertThatThrownBy(() -> service.delete(
+                new DeleteProblemCommand(11L, 2L, ACTOR, "r")))
                 .isInstanceOf(ProblemNotFoundException.class);
     }
 
     @Test
     void aStaleDeleteReturnsTheCurrentDraftAndDoesNotWrite() {
-        assertThatThrownBy(() -> service.delete(11L, 2L, ACTOR, "r"))
+        assertThatThrownBy(() -> service.delete(
+                new DeleteProblemCommand(11L, 2L, ACTOR, "r")))
                 .isInstanceOfSatisfying(DraftVersionConflictException.class,
                         conflict -> assertThat(conflict.current().revision()).isEqualTo(3L));
         assertThat(repository.deleteCalls).isZero();
