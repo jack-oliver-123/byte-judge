@@ -433,6 +433,8 @@ class AdminInitializationTest {
         environment.put("SPRING_PROFILES_ACTIVE", "admin-command-test");
         environment.put("BYTE_JUDGE_INTERNAL_GATEWAY_CREDENTIAL",
                 "admin-command-test-internal-credential-0123456789");
+        environment.put("BYTE_JUDGE_INTERNAL_PROBLEM_CREDENTIAL",
+                "admin-command-test-problem-credential-0123456789");
         environment.put("BYTE_JUDGE_WEB_INGRESS", "false");
         environment.put("BYTE_JUDGE_AUDIT_WORKER_ID", "0");
         environment.put("BYTE_JUDGE_AUDIT_DATACENTER_ID", "0");

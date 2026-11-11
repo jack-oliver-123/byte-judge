@@ -978,6 +978,7 @@ class AuthenticationFlowTest {
         private final String runId = UUID.randomUUID().toString().replace("-", "");
         private final Map<String, String> extraEnvironment;
         private final int userInstances;
+        private final boolean problemEnabled;
         private final java.util.concurrent.atomic.AtomicInteger probeCounter = new java.util.concurrent.atomic.AtomicInteger();
         private final String discoveryGroup = "AUTH_HTTP_" + runId;
         private final String configGroup = "AUTH_CONFIG_" + runId;
@@ -1001,10 +1002,15 @@ class AuthenticationFlowTest {
         private int userPort;
         private int userHealthPort;
         private int secondUserPort;
+        private int problemPort;
+        private int problemHealthPort;
         private RunningApplication user;
         private RunningApplication secondUser;
+        private RunningApplication problem;
         private String userClasspath;
         private String gatewayClasspath;
+        private String problemDatabaseName;
+        private String problemDatabasePassword;
         private MySQLContainer database;
         private GenericContainer<?> nacos;
         private GenericContainer<?> redis;
@@ -1015,16 +1021,21 @@ class AuthenticationFlowTest {
         private Map<String, String> userEnvironment = Map.of();
 
         AuthenticationSystem() {
-            this(Map.of(), 1);
+            this(Map.of(), 1, false);
         }
 
         AuthenticationSystem(Map<String, String> extraEnvironment) {
-            this(extraEnvironment, 1);
+            this(extraEnvironment, 1, false);
         }
 
         AuthenticationSystem(Map<String, String> extraEnvironment, int userInstances) {
+            this(extraEnvironment, userInstances, false);
+        }
+
+        AuthenticationSystem(Map<String, String> extraEnvironment, int userInstances, boolean problemEnabled) {
             this.extraEnvironment = Map.copyOf(extraEnvironment);
             this.userInstances = userInstances;
+            this.problemEnabled = problemEnabled;
         }
 
         void start() throws Exception {
@@ -1039,7 +1050,10 @@ class AuthenticationFlowTest {
 
             database = track(new MySQLContainer(DockerImageName.parse("mysql:8.4.13"))
                     .withDatabaseName("auth_http_test").withUsername("auth_http_test")
-                    .withPassword(UUID.randomUUID().toString()));
+                    .withPassword(UUID.randomUUID().toString())
+                    // The problem fixture creates its own schema/account from the host, so the
+                    // disposable root account must be reachable over the mapped port.
+                    .withEnv("MYSQL_ROOT_HOST", "%"));
             database.start();
             redisPassword = UUID.randomUUID().toString();
             redis = track(new GenericContainer<>(DockerImageName.parse("redis:7.4.12"))
@@ -1084,6 +1098,7 @@ class AuthenticationFlowTest {
             environment.put("SPRING_SESSION_DATA_REDIS_NAMESPACE", "auth-http:" + runId);
             environment.put("BYTE_JUDGE_SESSION_COOKIE_SECURE", "false");
             environment.put("BYTE_JUDGE_INTERNAL_GATEWAY_CREDENTIAL", internalCredential);
+            environment.put("BYTE_JUDGE_INTERNAL_PROBLEM_CREDENTIAL", "problem-http-test-" + runId);
             // Short block duration for rate-limit acceptance; production defaults stay 10/15m.
             environment.put("BYTE_JUDGE_AUTH_RATE_LIMIT_BLOCK_DURATION", "30s");
             environment.put("BYTE_JUDGE_AUTH_RATE_LIMIT_NAMESPACE", "auth-http:" + runId + ":login");
@@ -1151,6 +1166,9 @@ class AuthenticationFlowTest {
                 awaitHealth(gateway, healthPort, false);
                 awaitDiscovery(nacos, "byte-judge-gateway", gatewayPort);
             }
+            if (problemEnabled) {
+                startProblem();
+            }
             System.out.println("AUTH_HTTP_READY profile=auth-http-test group=" + discoveryGroup + " logs=" + logs);
         }
 
@@ -1183,7 +1201,7 @@ class AuthenticationFlowTest {
         private void publishNacosConfigs() throws Exception {
             Path directory = backend.resolve("infra/nacos/config");
             for (String dataId : List.of("byte-judge-common.yml", "byte-judge-gateway.yml",
-                    "byte-judge-user-model.yml")) {
+                    "byte-judge-user-model.yml", "byte-judge-problem-model.yml")) {
                 publishNacosConfig(dataId, Files.readString(directory.resolve(dataId), StandardCharsets.UTF_8));
             }
         }
@@ -1298,6 +1316,34 @@ class AuthenticationFlowTest {
             var builder = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                     "@" + arguments).directory(logs.toFile()).redirectErrorStream(true).redirectOutput(output.toFile());
             // Keep only OS essentials. Inherited Spring/infra/JVM settings must never select a local environment.
+            var inherited = new HashMap<>(builder.environment());
+            builder.environment().clear();
+            for (String key : List.of("SystemRoot", "WINDIR", "ComSpec", "PATH", "PATHEXT", "TEMP", "TMP",
+                    "USERPROFILE", "HOME", "APPDATA", "LOCALAPPDATA")) {
+                if (inherited.containsKey(key)) {
+                    builder.environment().put(key, inherited.get(key));
+                }
+            }
+            builder.environment().putAll(environment);
+            builder.environment().putAll(overrides);
+            var application = new RunningApplication(builder.start(), output);
+            applications.add(application);
+            resources.add(application);
+            return application;
+        }
+
+        private RunningApplication launchJar(String name, Path jar, Map<String, String> overrides)
+                throws Exception {
+            Path configHome = logs.resolve("homes/" + name);
+            Files.createDirectories(configHome);
+            Path arguments = logs.resolve(name + ".args");
+            Files.writeString(arguments, "-Xmx320m\n-Dfile.encoding=UTF-8\n-Duser.home=\""
+                    + configHome.toString().replace('\\', '/') + "\"\n-DJM.LOG.PATH=\""
+                    + logs.resolve(name + "/nacos").toString().replace('\\', '/')
+                    + "\"\n-jar\n\"" + jar.toString().replace('\\', '/') + "\"\n", StandardCharsets.UTF_8);
+            Path output = logs.resolve(name + ".console.log");
+            var builder = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                    "@" + arguments).directory(logs.toFile()).redirectErrorStream(true).redirectOutput(output.toFile());
             var inherited = new HashMap<>(builder.environment());
             builder.environment().clear();
             for (String key : List.of("SystemRoot", "WINDIR", "ComSpec", "PATH", "PATHEXT", "TEMP", "TMP",
@@ -1573,6 +1619,232 @@ class AuthenticationFlowTest {
         int secondUserPort() {
             return secondUserPort;
         }
+
+        /**
+         * Starts the real problem service from its executable JAR with the same disposable Redis,
+         * Nacos and MySQL server but its own schema and account, as a deployment would. The JAR
+         * must be built by the normal backend build; this test never links problem classes.
+         */
+        private void startProblem() throws Exception {
+            Path jar = backend.resolve("byte-judge-models/byte-judge-problem-model/target/"
+                    + "byte-judge-problem-model-0.0.1-SNAPSHOT.jar");
+            assertThat(jar).as("Build the problem executable JAR first: "
+                    + "./mvnw.cmd -pl byte-judge-models/byte-judge-problem-model -am package -DskipTests")
+                    .isRegularFile();
+            createProblemDatabase();
+            Files.createDirectories(artifactRoot());
+            try (var port = reservePort(); var managementPort = reservePort()) {
+                problemPort = port.getLocalPort();
+                problemHealthPort = managementPort.getLocalPort();
+                port.close();
+                managementPort.close();
+                var overrides = new HashMap<String, String>();
+                overrides.put("SPRING_DATASOURCE_URL", boundedJdbcUrl(problemJdbcUrl()));
+                overrides.put("SPRING_DATASOURCE_USERNAME", problemDatabaseName);
+                overrides.put("SPRING_DATASOURCE_PASSWORD", problemDatabasePassword);
+                overrides.put("SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE", "3");
+                overrides.put("SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT", "5000");
+                overrides.put("SPRING_FLYWAY_ENABLED", "true");
+                overrides.put("SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE", "1MB");
+                overrides.put("SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE", "8MB");
+                overrides.put("BYTE_JUDGE_PROBLEM_WORKER_ID", "1");
+                overrides.put("BYTE_JUDGE_PROBLEM_DATACENTER_ID", "0");
+                overrides.put("BYTE_JUDGE_ARTIFACT_ROOT", artifactRoot().toString());
+                overrides.put("MANAGEMENT_PORT", Integer.toString(problemHealthPort));
+                problem = launchJar("problem", jar,
+                        webEnvironment(overrides, "problem", problemPort, problemHealthPort));
+                awaitHealth(problem, problemHealthPort, true);
+                awaitDiscovery(nacos, "byte-judge-problem-model", problemPort);
+                System.out.println("PROBLEM_HTTP_READY port=" + problemPort
+                        + " log=" + logs.resolve("problem.console.log"));
+            }
+        }
+
+        private void createProblemDatabase() throws Exception {
+            problemDatabaseName = "problem_http_test";
+            problemDatabasePassword = UUID.randomUUID().toString();
+            String rootUrl = "jdbc:mysql://" + database.getHost() + ":"
+                    + database.getMappedPort(3306) + "/?connectionTimeZone=UTC";
+            // Testcontainers sets the root password to the configured account password. The
+            // problem service gets its own schema and a least-privilege account, never the
+            // user service's account.
+            try (var connection = java.sql.DriverManager.getConnection(
+                    rootUrl, "root", database.getPassword());
+                 var statement = connection.createStatement()) {
+                statement.execute("CREATE DATABASE IF NOT EXISTS " + problemDatabaseName
+                        + " CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci");
+                statement.execute("CREATE USER IF NOT EXISTS '" + problemDatabaseName
+                        + "'@'%' IDENTIFIED BY '" + problemDatabasePassword + "'");
+                statement.execute("GRANT ALL PRIVILEGES ON " + problemDatabaseName
+                        + ".* TO '" + problemDatabaseName + "'@'%'");
+                statement.execute("FLUSH PRIVILEGES");
+            }
+        }
+
+        private String problemJdbcUrl() {
+            return "jdbc:mysql://" + database.getHost() + ":" + database.getMappedPort(3306)
+                    + "/" + problemDatabaseName + "?connectionTimeZone=UTC";
+        }
+
+        Path artifactRoot() {
+            return logs.resolve("artifacts");
+        }
+
+        int problemPort() {
+            return problemPort;
+        }
+
+        String problemCredential() {
+            return environment.get("BYTE_JUDGE_INTERNAL_PROBLEM_CREDENTIAL");
+        }
+
+        Path problemConsoleLog() {
+            return logs.resolve("problem.console.log");
+        }
+
+        Path problemApplicationLog() {
+            return logs.resolve("problem/application.log");
+        }
+
+        void awaitProblemApplicationLog(String expected) throws Exception {
+            awaitApplicationLog(problemApplicationLog(), expected, Duration.ofSeconds(20));
+        }
+
+        URI problemUri(String path) {
+            return URI.create("http://127.0.0.1:" + problemPort + path);
+        }
+
+        /** Gateway call whose upstream is the problem service, waited on through its access log. */
+        HttpResponse<String> problemCall(Browser browser, String method, String path,
+                                         Map<String, String> headers, byte[] body,
+                                         String contentType) throws Exception {
+            String probed = probe(path);
+            var builder = HttpRequest.newBuilder(gatewayUri(probed)).timeout(Duration.ofSeconds(20))
+                    .method(method, body == null
+                            ? HttpRequest.BodyPublishers.noBody()
+                            : HttpRequest.BodyPublishers.ofByteArray(body));
+            if (contentType != null) {
+                builder.header("Content-Type", contentType);
+            }
+            headers.forEach(builder::header);
+            var response = browser.perform(builder);
+            awaitProblemAccess(method, probed, response);
+            return response;
+        }
+
+        /** Authenticated admin call expected to be refused at the gateway before proxying. */
+        HttpResponse<String> problemCallNoWait(Browser browser, String method, String path,
+                                               Map<String, String> headers, byte[] body,
+                                               String contentType) throws Exception {
+            var builder = HttpRequest.newBuilder(gatewayUri(probe(path))).timeout(Duration.ofSeconds(20))
+                    .method(method, body == null
+                            ? HttpRequest.BodyPublishers.noBody()
+                            : HttpRequest.BodyPublishers.ofByteArray(body));
+            if (contentType != null) {
+                builder.header("Content-Type", contentType);
+            }
+            headers.forEach(builder::header);
+            return browser.perform(builder);
+        }
+
+        /** Direct problem-service call, bypassing the gateway on purpose. */
+        HttpResponse<String> problemDirectCall(Browser browser, String method, String path,
+                                               Map<String, String> headers, byte[] body,
+                                               String contentType) throws Exception {
+            var builder = HttpRequest.newBuilder(problemUri(probe(path))).timeout(Duration.ofSeconds(20))
+                    .method(method, body == null
+                            ? HttpRequest.BodyPublishers.noBody()
+                            : HttpRequest.BodyPublishers.ofByteArray(body));
+            if (contentType != null) {
+                builder.header("Content-Type", contentType);
+            }
+            headers.forEach(builder::header);
+            return browser.perform(builder);
+        }
+
+        void awaitProblemAccess(String method, String path, HttpResponse<String> response) throws Exception {
+            String safePath = URI.create(path).getRawPath();
+            int status = response.statusCode();
+            if (!response.headers().firstValue("X-Request-ID").isPresent()) {
+                throw new AssertionError("Problem response is missing X-Request-ID: " + response.body());
+            }
+            String requestId = response.headers().firstValue("X-Request-ID").orElseThrow();
+            await("downstream problem access for " + safePath, Duration.ofSeconds(20),
+                    () -> accessLogged(logs.resolve("problem/access"), method, safePath, status, requestId));
+            System.out.println("PROBLEM_HTTP_DOWNSTREAM " + method + " " + safePath + " "
+                    + status + " requestId=" + requestId);
+        }
+
+        Connection connectProblem() throws Exception {
+            return java.sql.DriverManager.getConnection(problemJdbcUrl(),
+                    problemDatabaseName, problemDatabasePassword);
+        }
+
+        long problemAuditCount(String event, String outcome, long problemId) throws Exception {
+            try (var connection = connectProblem();
+                 var statement = connection.prepareStatement(
+                         "SELECT COUNT(*) FROM problem_audit WHERE event = ? AND outcome = ? AND problemId = ?")) {
+                statement.setString(1, event);
+                statement.setString(2, outcome);
+                statement.setLong(3, problemId);
+                try (var rows = statement.executeQuery()) {
+                    assertThat(rows.next()).isTrue();
+                    return rows.getLong(1);
+                }
+            }
+        }
+
+        String problemAuditDump() throws Exception {
+            var dump = new StringBuilder();
+            try (var connection = connectProblem();
+                 var statement = connection.createStatement();
+                 var rows = statement.executeQuery(
+                         "SELECT operatorId, operatorAccount, event, outcome, reason, problemId, requestId "
+                                 + "FROM problem_audit")) {
+                while (rows.next()) {
+                    for (int column = 1; column <= 7; column++) {
+                        dump.append(rows.getString(column)).append('|');
+                    }
+                    dump.append('\n');
+                }
+            }
+            return dump.toString();
+        }
+
+        long artifactRowCount(long problemId) throws Exception {
+            try (var connection = connectProblem();
+                 var statement = connection.prepareStatement(
+                         "SELECT COUNT(*) FROM problem_artifact WHERE problemId = ? AND isDelete = 0")) {
+                statement.setLong(1, problemId);
+                try (var rows = statement.executeQuery()) {
+                    assertThat(rows.next()).isTrue();
+                    return rows.getLong(1);
+                }
+            }
+        }
+
+        /** Builds a binary multipart body so file bytes and the 1 MiB bound stay exact. */
+        MultipartBody multipart(String boundary, Map<String, String> fields, String fileField,
+                                String fileName, byte[] fileContent) throws Exception {
+            var out = new java.io.ByteArrayOutputStream();
+            for (var field : fields.entrySet()) {
+                out.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\""
+                        + field.getKey() + "\"\r\n\r\n" + field.getValue() + "\r\n")
+                        .getBytes(StandardCharsets.UTF_8));
+            }
+            if (fileField != null) {
+                out.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\""
+                        + fileField + "\"; filename=\"" + fileName + "\"\r\n"
+                        + "Content-Type: application/octet-stream\r\n\r\n")
+                        .getBytes(StandardCharsets.UTF_8));
+                out.write(fileContent);
+                out.write("\r\n".getBytes(StandardCharsets.UTF_8));
+            }
+            out.write(("--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+            return new MultipartBody(out.toByteArray(), "multipart/form-data; boundary=" + boundary);
+        }
+
+        record MultipartBody(byte[] bytes, String contentType) { }
 
         URI userUriOn(int port, String path) {
             return URI.create("http://127.0.0.1:" + port + path);
