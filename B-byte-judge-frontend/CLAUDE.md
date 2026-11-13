@@ -5,5 +5,5 @@
 - 构建基址为 `/admin/`（`vite.config.ts` 的 `base`），部署约定见 `../docs/04.系统架构设计.md` §2.3。
 - 业务请求统一走 `/api/v1/**` 网关路径，前端不直连业务服务。
 - 基础组件通过 shadcn/vue CLI 安装在 `src/components/ui/`，业务页面与全局设计令牌分别位于 `src/views/`、`src/styles/theme.css`。组件使用 Lucide 图标、Sonner 通知；新增组件继续使用 shadcn/vue。
-- 已接入登录、题库草稿管理与基础编辑保存页面、请求层与管理员路由守卫；冲突合并、暂存恢复、Markdown 预览与异常恢复待后续前端切片，测试数据上传、校验、发布与下架尚未接入。
+- 已接入登录、题库草稿管理、编辑保存、冲突合并、标签页暂存恢复、安全 Markdown 预览与保存结果回读确认；验证范围见 `../docs/frontend-B/problem-draft-edit-verification.md`。测试数据上传、发布校验、发布与下架尚未接入前端。
 - 本地开发时 `/api/v1/**` 经 Vite 代理到 `http://127.0.0.1:8080`；正式部署使用同源 HTTPS。

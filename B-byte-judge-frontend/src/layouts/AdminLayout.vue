@@ -34,6 +34,7 @@ import {
   AlertDialogAction,
 } from '@/components/ui/alert-dialog'
 import { useAuthStore } from '@/stores/auth'
+import { editingLeaveState } from '@/lib/editing-guard'
 
 const route = useRoute()
 const router = useRouter()
@@ -42,6 +43,7 @@ const account = computed(() => auth.identity?.account ?? '管理员')
 const mobileNav = ref(false)
 const logoutOpen = ref(false)
 const loggingOut = ref(false)
+const busyWarning = computed(() => editingLeaveState.value === 'busy')
 
 async function logout() {
   if (loggingOut.value) return
@@ -136,19 +138,28 @@ async function logout() {
       </header>
       <main class="content"><RouterView /></main>
     </div>
-    <AlertDialog v-model:open="logoutOpen"
+    <AlertDialog :open="logoutOpen" @update:open="logoutOpen = $event"
       ><AlertDialogContent
         ><AlertDialogHeader
-          ><AlertDialogTitle>退出登录？</AlertDialogTitle
-          ><AlertDialogDescription
-            >退出后需要重新登录才能进入管理控制台。</AlertDialogDescription
-          ></AlertDialogHeader
-        ><AlertDialogFooter
-          ><AlertDialogCancel>取消</AlertDialogCancel
-          ><AlertDialogAction :disabled="loggingOut" @click="logout">{{
-            loggingOut ? '正在退出…' : '退出登录'
-          }}</AlertDialogAction></AlertDialogFooter
-        ></AlertDialogContent
+          ><AlertDialogTitle>{{ loggingOut ? '正在退出…' : '退出登录？' }}</AlertDialogTitle
+          ><AlertDialogDescription>
+            <template v-if="busyWarning"
+              >正在保存草稿，退出会中断本次保存。推荐等待保存结束后再退出。</template
+            >
+            <template v-else-if="editingLeaveState === 'unsaved'"
+              >当前编辑页有尚未保存到服务器的修改。退出会清除本标签页的草稿暂存，未保存输入将丢失；若需要保留，请先取消并复制全部字段。</template
+            >
+            <template v-else>退出后需要重新登录才能进入管理控制台。</template>
+          </AlertDialogDescription></AlertDialogHeader
+        ><AlertDialogFooter>
+          <AlertDialogCancel v-if="busyWarning">继续编辑</AlertDialogCancel>
+          <template v-else
+            ><AlertDialogCancel :disabled="loggingOut">取消</AlertDialogCancel
+            ><AlertDialogAction :disabled="loggingOut" @click="logout">{{
+              loggingOut ? '正在退出…' : '退出登录'
+            }}</AlertDialogAction></template
+          >
+        </AlertDialogFooter></AlertDialogContent
       ></AlertDialog
     >
   </div>

@@ -11,6 +11,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ApiError } from '@/api/http'
 import { useAuthStore } from '@/stores/auth'
+import { clearDraftCaches } from '@/lib/draft-cache'
 import BrandPanel from '@/components/BrandPanel.vue'
 
 const route = useRoute()
@@ -31,7 +32,7 @@ onMounted(async () => {
     form.account = ''
   }
   if (!auth.ready) await auth.restore()
-  if (auth.identity) await router.replace('/problems')
+  if (auth.identity && route.query.relogin !== '1') await router.replace('/problems')
 })
 
 function validate(field: 'account' | 'password') {
@@ -78,14 +79,16 @@ async function submit() {
   serverError.value = ''
   submitting.value = true
   try {
-    await auth.login(form.account.trim(), form.password)
+    const previous = auth.identity?.userId
+    const identity = await auth.login(form.account.trim(), form.password)
+    if (previous && previous !== identity.userId) clearDraftCaches(previous)
     try {
       if (remembering.value) localStorage.setItem('bj-admin-account', form.account.trim())
       else localStorage.removeItem('bj-admin-account')
     } catch {
       remembering.value = false
     }
-    toast.success('登录成功')
+    toast.success(route.query.relogin === '1' ? '登录成功，返回编辑页确认恢复' : '登录成功')
     const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/problems'
     await router.replace(
       redirect.startsWith('/') && !redirect.startsWith('//') ? redirect : '/problems',

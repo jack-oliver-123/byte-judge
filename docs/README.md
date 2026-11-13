@@ -42,7 +42,7 @@ C 端目录沿用已有名称 `fontend-C`。跨端共享的功能规格保存在
 ## 前端文档索引
 
 - [B 端题目草稿编辑与并发保存设计](frontend-B/problem-draft-edit-design.md)
-- [B 端题目草稿编辑与请求处理验证记录](frontend-B/problem-draft-edit-verification.md)
+- [B 端题目草稿编辑与并发保存验证记录](frontend-B/problem-draft-edit-verification.md)
 - [B 端管理员登录与题库管理静态原型](frontend-B/prototypes/README.md)
 - [B 端第二版白色与淡青色原型](frontend-B/prototypes-v2/README.md)
 - [B 端纸墨松绿视觉原型](frontend-B/prototypes-pine/README.md)
