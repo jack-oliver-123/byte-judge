@@ -20,6 +20,14 @@ export default defineConfigWithVueTs(
   ...pluginVue.configs['flat/essential'],
   vueTsConfigs.recommended,
 
+  {
+    name: 'app/shadcn-component-names',
+    files: ['src/components/ui/**/*.vue'],
+    rules: {
+      'vue/multi-word-component-names': 'off',
+    },
+  },
+
   ...pluginOxlint.buildFromOxlintConfigFile('.oxlintrc.json'),
 
   skipFormatting,
