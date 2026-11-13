@@ -98,7 +98,10 @@ const copyText = computed(() => {
     return `题号：${detail.value?.problemNo ?? '—'}（不兼容的暂存，仅供复制）\n${Object.entries(
       incompatible.value,
     )
-      .map(([key, value]) => `${fieldLabels[key as FieldKey]}：${value}`)
+      .map(
+        ([key, value]) =>
+          `${fieldLabels[key as FieldKey]}：${Array.isArray(value) ? JSON.stringify(value) : value}`,
+      )
       .join('\n')}`
   if (conflict.value)
     return `题号：${detail.value?.problemNo ?? '—'}\n${Object.entries(conflict.value.local)
@@ -117,7 +120,8 @@ const copyText = computed(() => {
     }
   } else {
     lines.push('（当前输入未通过字段校验，以下为原始文本）')
-    for (const [key, text] of Object.entries(form)) lines.push(`${key}：${text}`)
+    for (const [key, text] of Object.entries(form))
+      lines.push(`${key}：${Array.isArray(text) ? JSON.stringify(text) : text}`)
   }
   return lines.join('\n')
 })
@@ -176,6 +180,7 @@ function describe(error: unknown) {
 async function load() {
   const current = ++sequence
   window.clearTimeout(cacheTimer)
+  cacheTimer = undefined
   loading.value = true
   detail.value = null
   stopped.value = false
@@ -610,8 +615,7 @@ watch(
     setEditingState(auth.identity ? state : null)
     if (auth.leaving) return
     if (restore.value) return
-    window.clearTimeout(cacheTimer)
-    cacheTimer = window.setTimeout(cacheNow, 400)
+    if (cacheTimer === undefined) cacheTimer = window.setTimeout(cacheNow, 400)
   },
   { immediate: true },
 )
@@ -626,9 +630,7 @@ watch(
     }
     sequence++
     detail.value = null
-    Object.keys(form).forEach((key) => {
-      form[key as keyof typeof form] = ''
-    })
+    Object.assign(form, emptyForm())
     saving.value = false
     loading.value = false
     stopped.value = true
@@ -638,6 +640,7 @@ watch(
     pending.value = null
     incompatible.value = null
     window.clearTimeout(cacheTimer)
+    cacheTimer = undefined
     cacheNotice.value = ''
     cacheFailure = ''
     authLost.value = !userId
@@ -754,14 +757,33 @@ onBeforeUnmount(() => {
           </Select>
         </div>
         <div class="field">
-          <Label for="draft-tags">标签（每行一个，最多 5 个）</Label
-          ><Textarea
-            id="draft-tags"
-            v-model="form.tags"
-            :rows="5"
-            :aria-invalid="!!errors.tags"
-            aria-describedby="error-tags"
-          />
+          <p id="draft-tags-label">标签（最多 5 个，每个独立填写）</p>
+          <div v-for="(_, index) in form.tags" :key="index" class="field">
+            <Label :for="`draft-tag-${index}`">标签 {{ index + 1 }}</Label>
+            <Textarea
+              :id="`draft-tag-${index}`"
+              v-model="form.tags[index]"
+              :rows="2"
+              :aria-invalid="!!errors.tags"
+              aria-describedby="error-tags"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              :aria-label="`删除标签 ${index + 1}`"
+              @click="form.tags.splice(index, 1)"
+            >
+              删除标签
+            </Button>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            :disabled="form.tags.length >= 5"
+            @click="form.tags.push('')"
+          >
+            添加标签
+          </Button>
           <p id="error-tags" class="error">{{ errors.tags }}</p>
         </div>
       </fieldset>

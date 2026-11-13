@@ -7,7 +7,7 @@ export type DraftForm = {
   inputDescription: string
   outputDescription: string
   difficulty: string
-  tags: string
+  tags: string[]
   timeLimitCpuMs: string
   timeLimitWallMs: string
   memoryLimitMiB: string
@@ -22,7 +22,7 @@ export const emptyForm = (): DraftForm => ({
   inputDescription: '',
   outputDescription: '',
   difficulty: '',
-  tags: '',
+  tags: [],
   timeLimitCpuMs: '',
   timeLimitWallMs: '',
   memoryLimitMiB: '',
@@ -82,7 +82,7 @@ export function formFromFields(value: DraftFields): DraftForm {
     inputDescription: value.inputDescription ?? '',
     outputDescription: value.outputDescription ?? '',
     difficulty: value.difficulty ?? '',
-    tags: (value.tags ?? []).join('\n'),
+    tags: [...(value.tags ?? [])],
     timeLimitCpuMs: value.timeLimitCpuMs === null ? '' : String(value.timeLimitCpuMs),
     timeLimitWallMs: value.timeLimitWallMs === null ? '' : String(value.timeLimitWallMs),
     memoryLimitMiB: value.memoryLimitMiB === null ? '' : String(value.memoryLimitMiB),
@@ -139,9 +139,9 @@ export function fieldsFromForm(form: DraftForm): {
   if (form.difficulty && !['EASY', 'MEDIUM', 'HARD'].includes(form.difficulty))
     found.difficulty = '请选择有效的难度。'
   if (!title || Array.from(title).length > 100) found.title = '标题需为 1–100 个 Unicode 字符。'
-  const tags = form.tags === '' ? [] : form.tags.split('\n').map(strip)
+  const tags = form.tags.map(strip)
   if (tags.length > 5 || tags.some((tag) => !tag || Array.from(tag).length > 20))
-    found.tags = '每行一个标签，最多 5 个，每个 1–20 个字符，不可为空。'
+    found.tags = '最多 5 个标签，每个 1–20 个字符，不可为空。'
   const bytes = textFields.reduce(
     (total, field) => total + new TextEncoder().encode(form[field.key]).length,
     0,
@@ -210,7 +210,22 @@ export function validDetail(value: unknown): value is ProblemDetail {
     resourceFields.every(
       (resource) => detail[resource.key] === null || Number.isSafeInteger(detail[resource.key]),
     ) &&
-    Array.isArray(detail.artifacts)
+    Array.isArray(detail.artifacts) &&
+    detail.artifacts.every((value: unknown) => {
+      const artifact = value as Partial<ArtifactManifest> | null
+      return (
+        !!artifact &&
+        typeof artifact === 'object' &&
+        typeof artifact.artifactId === 'string' &&
+        typeof artifact.kind === 'string' &&
+        typeof artifact.fileName === 'string' &&
+        typeof artifact.contentDigest === 'string' &&
+        Number.isSafeInteger(artifact.caseOrder) &&
+        Number.isSafeInteger(artifact.displayOrder) &&
+        Number.isSafeInteger(artifact.byteSize) &&
+        artifact.byteSize! >= 0
+      )
+    })
   )
 }
 

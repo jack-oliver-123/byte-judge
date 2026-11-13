@@ -1,7 +1,8 @@
 import type { DraftFields } from '@/api/problems'
 import { emptyForm, fieldsFromForm, sameFields, type DraftForm } from '@/lib/problem-fields'
 
-const FORMAT = 'byte-judge/draft-cache@2'
+const FORMAT = 'byte-judge/draft-cache@3'
+const LEGACY_FORMAT = 'byte-judge/draft-cache@2'
 const PREFIX = 'byte-judge.draft.'
 
 export interface DraftCacheInput {
@@ -14,8 +15,9 @@ export interface DraftCacheInput {
   updatedAt: string
 }
 
-interface DraftCacheRecord extends DraftCacheInput {
-  format: typeof FORMAT
+interface DraftCacheRecord extends Omit<DraftCacheInput, 'form'> {
+  format: string
+  form: DraftForm | (Omit<DraftForm, 'tags'> & { tags: string })
   savedAt: string
 }
 
@@ -45,11 +47,19 @@ const isForm = (value: unknown): value is DraftForm => {
   return (
     !!form &&
     typeof form === 'object' &&
-    Object.keys(emptyForm()).every((field) => typeof form[field as keyof DraftForm] === 'string')
+    Object.keys(emptyForm()).every((field) =>
+      field === 'tags'
+        ? Array.isArray(form.tags) && form.tags.every((tag) => typeof tag === 'string')
+        : typeof form[field as keyof DraftForm] === 'string',
+    )
   )
 }
 
 function parse(record: Partial<DraftCacheRecord>): DraftCacheInput | null {
+  const form =
+    record.format === LEGACY_FORMAT && typeof record.form?.tags === 'string'
+      ? { ...record.form, tags: record.form.tags === '' ? [] : record.form.tags.split('\n') }
+      : record.form
   if (
     typeof record.userId !== 'string' ||
     typeof record.problemId !== 'string' ||
@@ -59,7 +69,7 @@ function parse(record: Partial<DraftCacheRecord>): DraftCacheInput | null {
     record.revision! < 0 ||
     typeof record.savedAt !== 'string' ||
     typeof record.updatedAt !== 'string' ||
-    !isForm(record.form)
+    !isForm(form)
   )
     return null
   return {
@@ -69,7 +79,7 @@ function parse(record: Partial<DraftCacheRecord>): DraftCacheInput | null {
     draftId: record.draftId,
     revision: record.revision!,
     form: Object.fromEntries(
-      Object.keys(emptyForm()).map((field) => [field, record.form![field as keyof DraftForm]]),
+      Object.keys(emptyForm()).map((field) => [field, form[field as keyof DraftForm]]),
     ) as DraftForm,
     updatedAt: record.updatedAt,
   }
@@ -132,7 +142,10 @@ export function readDraftCache(
       message:
         '本标签页暂存与当前题目身份不一致，已停止自动恢复。请通过“复制全部字段”保留当前输入。',
     }
-  if (record?.format !== FORMAT || draft.draftId !== server.draftId)
+  if (
+    (record?.format !== FORMAT && record?.format !== LEGACY_FORMAT) ||
+    draft.draftId !== server.draftId
+  )
     return {
       kind: 'identity-mismatch',
       message: '本标签页暂存的格式或草稿身份不兼容，不能直接恢复。请复制需要保留的内容后重新编辑。',

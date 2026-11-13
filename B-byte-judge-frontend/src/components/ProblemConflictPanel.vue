@@ -69,10 +69,7 @@ const resourceError = computed(() => {
 })
 const invalid = computed(() => {
   if (resourceError.value) return resourceError.value
-  const errors = fieldsFromForm({
-    ...formFromFields(merged.value),
-    tags: (merged.value.tags ?? []).join('\n'),
-  }).errors
+  const errors = fieldsFromForm(formFromFields(merged.value)).errors
   return Object.values(errors)[0] ?? ''
 })
 const canConfirm = computed(
